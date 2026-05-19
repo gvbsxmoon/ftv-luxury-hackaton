@@ -20,8 +20,6 @@ async function createSession() {
   sessionId = data.sessionId;
   token = data.token;
   $('qr').src = data.qrDataUrl;
-  $('session-id').textContent = data.sessionId;
-  $('mobile-url').textContent = data.mobileUrl;
   return data;
 }
 
@@ -271,11 +269,6 @@ async function loadModels() {
   ];
   axes.sort((a, b) => b.size - a.size);
   const dominant = axes[0].axis;
-  armAxis.set(
-    dominant === 'x' ? 1 : 0,
-    dominant === 'y' ? 1 : 0,
-    dominant === 'z' ? 1 : 0,
-  );
 
   // Place wrist anchor near the positive end of the dominant axis.
   const tipWorld = armBox2.getCenter(new THREE.Vector3());
@@ -305,36 +298,9 @@ async function loadModels() {
   const wCenter = wBox2.getCenter(new THREE.Vector3());
   baseWatch.position.sub(wCenter);
 
-  // Define variants by recoloring clones
-  const variants = [
-    { id: 'chrono-01', name: 'CHRONO 01',  metalColor: 0xb8b8c2, accent: 0xb14bff },
-    { id: 'noir-02',   name: 'NOIR 02',    metalColor: 0x2a2a32, accent: 0xff3da8 },
-    { id: 'argent-03', name: 'ARGENT 03',  metalColor: 0xe8e8ee, accent: 0x6efcff },
-    { id: 'voltage-04',name: 'VOLTAGE 04', metalColor: 0x4a3568, accent: 0xc1ff4b },
-  ];
-  for (const v of variants) {
-    const clone = baseWatch.clone(true);
-    clone.traverse((o) => {
-      if (o.isMesh && o.material && o.material.isMeshStandardMaterial) {
-        const m = o.material.clone();
-        // crude heuristic: by name color either case (shell) or accents (dial/markers)
-        const n = (o.name + ' ' + (o.material.name || '')).toLowerCase();
-        if (n.match(/screen|dial|glow|emiss|index|hand|marker|led/)) {
-          m.emissive = new THREE.Color(v.accent);
-          m.emissiveIntensity = 0.25;
-          m.color = new THREE.Color(v.accent).multiplyScalar(0.25);
-        } else {
-          m.color = new THREE.Color(v.metalColor);
-          m.metalness = 0.7;
-          m.roughness = 0.45;
-        }
-        o.material = m;
-      }
-    });
-    clone.visible = false;
-    watchVariants[v.id] = clone;
-    watchHolder.add(clone);
-  }
+  // Single variant — keep the watch's own materials as-is (after styleWatch tweaks).
+  watchVariants['chrono-01'] = baseWatch;
+  watchHolder.add(baseWatch);
 
   // Remember the base scale we computed, so the tuner's "scale: 1.0" = original size.
   WATCH_OFFSET.s_base = wScale;
@@ -355,19 +321,13 @@ function setActiveWatch(id) {
 // Calibration: we capture an inverse of the phone's first quaternion when calibrated,
 // then apply it so that the calibrated pose corresponds to identity rotation on the arm.
 
-const targetArmQuat = new THREE.Quaternion();   // pitch/yaw only — drives the arm
-const currentArmQuat = new THREE.Quaternion();  // smoothed arm rotation
-let targetTwist = 0;                            // roll angle around arm axis (radians)
-let currentTwist = 0;                           // smoothed twist
+const targetQuat = new THREE.Quaternion();      // raw target after calibration & remap
+const currentQuat = new THREE.Quaternion();     // smoothed value applied to armPivot
 const calibInv = new THREE.Quaternion();        // inverse of baseline phone quaternion
 let hasCalibration = false;
 
 // Mapping tweaks: device "screen up" frame → scene frame.
 const REMAP = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
-
-// Local axis along which the watch twists on the wrist (= arm's dominant axis in scene).
-// Set after we detect the dominant axis during model loading.
-let armAxis = new THREE.Vector3(1, 0, 0);
 
 function onCalibration(payload) {
   const { quat } = payload;
@@ -386,40 +346,12 @@ function flashAccent() {
   setTimeout(() => { watchAccent.intensity = 1.6; }, 220);
 }
 
-// Swing-twist decomposition: split a rotation q into:
-//   twist = rotation around `axis`
-//   swing = remaining rotation perpendicular to `axis`
-// Standard formula: project q's vector part onto the axis to get the twist quat,
-// then swing = q * twist⁻¹.
-const _twist = new THREE.Quaternion();
-const _swing = new THREE.Quaternion();
-function decomposeSwingTwist(q, axis, outSwing, outTwist) {
-  const projection = axis.x * q.x + axis.y * q.y + axis.z * q.z;
-  outTwist.set(axis.x * projection, axis.y * projection, axis.z * projection, q.w);
-  const len = Math.hypot(outTwist.x, outTwist.y, outTwist.z, outTwist.w);
-  if (len < 1e-6) {
-    outTwist.set(0, 0, 0, 1);
-  } else {
-    outTwist.x /= len; outTwist.y /= len; outTwist.z /= len; outTwist.w /= len;
-  }
-  outSwing.copy(q).multiply(_twist.copy(outTwist).invert());
-}
-
 function onOrientationUpdate(payload) {
   const q = new THREE.Quaternion(payload.q[0], payload.q[1], payload.q[2], payload.q[3]);
   if (hasCalibration) q.premultiply(calibInv);
   q.multiply(REMAP);
-
-  // Split into swing (pitch/yaw → arm) and twist (roll around arm axis → watch).
-  decomposeSwingTwist(q, armAxis, _swing, _twist);
-  targetArmQuat.copy(_swing);
-
-  // Convert twist quaternion back to a signed angle around armAxis.
-  // sin(θ/2) sign comes from dot(twist.xyz, axis), cos(θ/2) = twist.w.
-  const dot = _twist.x * armAxis.x + _twist.y * armAxis.y + _twist.z * armAxis.z;
-  targetTwist = 2 * Math.atan2(dot, _twist.w);
-
-  $('hud-quat').textContent = `swing: ${_swing.x.toFixed(2)} ${_swing.y.toFixed(2)} ${_swing.z.toFixed(2)} ${_swing.w.toFixed(2)}  twist: ${targetTwist.toFixed(2)}`;
+  targetQuat.copy(q);
+  $('hud-quat').textContent = `q: ${q.x.toFixed(2)} ${q.y.toFixed(2)} ${q.z.toFixed(2)} ${q.w.toFixed(2)}`;
 }
 
 function enterScene() {
@@ -506,18 +438,8 @@ function animate() {
   // Smoothly slerp current → target (cinematic delay)
   if (armPivot) {
     const followStrength = 1 - Math.pow(0.0001, dt);
-    currentArmQuat.slerp(targetArmQuat, Math.min(0.25, followStrength * 6));
-    armPivot.quaternion.copy(currentArmQuat);
-
-    // Watch twist: smooth toward target, apply as local rotation on the watch model only.
-    currentTwist += (targetTwist - currentTwist) * Math.min(0.25, followStrength * 6);
-    if (watchHolder) {
-      for (const child of watchHolder.children) {
-        // base rotation from WATCH_OFFSET, plus twist about the arm axis
-        child.rotation.set(WATCH_OFFSET.rx, WATCH_OFFSET.ry, WATCH_OFFSET.rz);
-        child.rotateOnAxis(armAxis, currentTwist);
-      }
-    }
+    currentQuat.slerp(targetQuat, Math.min(0.25, followStrength * 6));
+    armPivot.quaternion.copy(currentQuat);
   }
 
   // Watch accent pulse

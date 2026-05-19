@@ -47,10 +47,7 @@
 
   // ---------------- watches ----------------
   const watches = [
-    { id: 'chrono-01',  name: 'CHRONO 01',  meta: 'Matte chrome × neon violet' },
-    { id: 'noir-02',    name: 'NOIR 02',    meta: 'Stealth obsidian × magenta' },
-    { id: 'argent-03',  name: 'ARGENT 03',  meta: 'Polished silver × cyan' },
-    { id: 'voltage-04', name: 'VOLTAGE 04', meta: 'Indigo × electric lime' },
+    { id: 'chrono-01',  name: 'CHRONO 01',  meta: 'Obsidian — luxury edition' },
   ];
   const watchesEl = $('watches');
   let activeWatch = 'chrono-01';
