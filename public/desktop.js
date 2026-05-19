@@ -461,8 +461,8 @@ function animate() {
 //
 // You can also hardcode these defaults — they apply on every reload:
 const WATCH_OFFSET = {
-  x: -0.560, y: 0.100, z: -0.080,
-  rx: -1.36, ry: -0.16, rz: -0.64,
+  x: -0.600, y: 0.120, z: -0.020,
+  rx: -1.36, ry: -0.32, rz: -0.72,
   s: 0.65,
 };
 
