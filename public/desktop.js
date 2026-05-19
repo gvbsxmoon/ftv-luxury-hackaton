@@ -424,7 +424,69 @@ function onOrientationUpdate(payload) {
 
 function enterScene() {
   armGroup.visible = true;
+  startBgm();
 }
+
+// ============== Background music (loop + fade-in) ==============
+const BGM_TARGET_VOLUME = 0.5;
+const BGM_FADE_MS = 3000;
+let bgmStarted = false;
+let bgmMuted = false;
+
+function startBgm() {
+  if (bgmStarted) return;
+  const audio = $('bgm');
+  if (!audio) return;
+  audio.volume = 0;
+  audio.muted = false;
+  const playPromise = audio.play();
+  const onPlaying = () => {
+    bgmStarted = true;
+    $('mute-btn').classList.remove('hidden');
+    fadeBgmTo(BGM_TARGET_VOLUME, BGM_FADE_MS);
+  };
+  if (playPromise && typeof playPromise.then === 'function') {
+    playPromise.then(onPlaying).catch(() => {
+      // Autoplay blocked — show mute button so the user can click to enable.
+      $('mute-btn').classList.remove('hidden');
+      $('mute-btn').classList.add('muted');
+      bgmMuted = true;
+    });
+  } else {
+    onPlaying();
+  }
+}
+
+function fadeBgmTo(targetVol, durationMs) {
+  const audio = $('bgm');
+  if (!audio) return;
+  const startVol = audio.volume;
+  const startT = performance.now();
+  function step(now) {
+    const k = Math.min(1, (now - startT) / durationMs);
+    audio.volume = startVol + (targetVol - startVol) * k;
+    if (k < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+$('mute-btn').addEventListener('click', () => {
+  const audio = $('bgm');
+  if (!audio) return;
+  if (bgmMuted) {
+    audio.muted = false;
+    if (audio.paused) audio.play().catch(() => {});
+    fadeBgmTo(BGM_TARGET_VOLUME, 600);
+    $('mute-btn').classList.remove('muted');
+    $('mute-icon').textContent = '♪';
+    bgmMuted = false;
+  } else {
+    audio.muted = true;
+    $('mute-btn').classList.add('muted');
+    $('mute-icon').textContent = '×';
+    bgmMuted = true;
+  }
+});
 
 // ============== Animate ==============
 const clock = new THREE.Clock();

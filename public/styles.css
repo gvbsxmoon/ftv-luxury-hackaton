@@ -168,6 +168,21 @@ code { font-family: 'JetBrains Mono', ui-monospace, monospace; color: var(--neon
   backdrop-filter: blur(12px);
 }
 .reconnect.hidden { display: none; }
+
+.mute-btn {
+  position: fixed; top: 28px; right: 36px; z-index: 7;
+  width: 38px; height: 38px; border-radius: 50%;
+  background: rgba(20,8,40,0.7);
+  border: 1px solid rgba(177,75,255,0.4);
+  color: #c89dff; font-size: 16px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity 0.4s ease, transform 0.15s ease;
+}
+.mute-btn:hover { transform: scale(1.05); }
+.mute-btn.hidden { opacity: 0; pointer-events: none; }
+.mute-btn.muted { color: #6a4a8a; }
 .reconnect button {
   background: linear-gradient(180deg, var(--neon), var(--neon-2));
   color: white; border: none; padding: 8px 14px; border-radius: 8px;
