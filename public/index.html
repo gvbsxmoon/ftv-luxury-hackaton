@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>OBSIDIAN ✦ Cyberpunk Watch</title>
+<link rel="stylesheet" href="/styles.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body class="desktop">
+  <canvas id="scene"></canvas>
+
+  <div id="vignette"></div>
+  <div id="grid"></div>
+  <div id="scanlines"></div>
+
+  <header class="brand">
+    <div class="logo">
+      <span class="logo-mark">◆</span>
+      <span class="logo-text">OBSIDIAN</span>
+    </div>
+    <div class="tagline">CHRONO / NEON SERIES — MOTION PAIRED</div>
+  </header>
+
+  <section id="pair-panel" class="panel">
+    <div class="panel-frame">
+      <div class="panel-tag">SESSION // STANDBY</div>
+      <h1>Scan to summon the artifact.</h1>
+      <p class="muted">Pair your phone. Calibrate. Move. The obsidian arm follows.</p>
+
+      <div class="qr-wrap">
+        <div class="qr-frame">
+          <img id="qr" alt="QR pairing code" />
+          <div class="qr-corner tl"></div>
+          <div class="qr-corner tr"></div>
+          <div class="qr-corner bl"></div>
+          <div class="qr-corner br"></div>
+          <div class="qr-scan"></div>
+        </div>
+        <div class="qr-meta">
+          <div><span class="muted">SESSION</span> <code id="session-id">—</code></div>
+          <div><span class="muted">ENDPOINT</span> <code id="mobile-url">—</code></div>
+        </div>
+      </div>
+
+      <div class="status-row">
+        <span class="dot" id="dot-desktop"></span><span>Desktop</span>
+        <span class="sep">/</span>
+        <span class="dot off" id="dot-mobile"></span><span>Mobile</span>
+        <span class="sep">/</span>
+        <span class="latency" id="latency">— ms</span>
+      </div>
+
+      <div style="margin-top: 18px; display: flex; gap: 10px;">
+        <button id="btn-preview" style="
+          flex: 1; appearance: none; cursor: pointer;
+          background: transparent; color: #c89dff;
+          border: 1px solid rgba(177,75,255,0.4); border-radius: 10px;
+          padding: 11px 14px; letter-spacing: 0.22em; text-transform: uppercase;
+          font-size: 11px; font-family: inherit;
+        ">Preview without phone</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="hud" class="hud hidden">
+    <div class="hud-line top">
+      <span>OBSIDIAN // LIVE</span>
+      <span id="hud-watch">CHRONO 01</span>
+      <span id="hud-mode">GYRO</span>
+    </div>
+    <div class="hud-corner tl"></div>
+    <div class="hud-corner tr"></div>
+    <div class="hud-corner bl"></div>
+    <div class="hud-corner br"></div>
+    <div class="hud-line bottom">
+      <span id="hud-quat">q: 0.00 0.00 0.00 1.00</span>
+      <span id="hud-fps">— fps</span>
+    </div>
+  </section>
+
+  <div id="reconnect" class="reconnect hidden">
+    <div>Mobile disconnected — present the QR again to re-pair.</div>
+    <button id="btn-new-session">NEW SESSION</button>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script type="module" src="/desktop.js"></script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<meta name="theme-color" content="#06030c" />
+<title>OBSIDIAN ✦ Controller</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="mobile">
+  <div class="m-shell">
+    <div class="m-top">
+      <div class="logo">
+        <span class="logo-mark">◆</span>
+        <span class="logo-text">OBSIDIAN</span>
+      </div>
+      <div class="m-status">
+        <span class="dot off" id="m-dot"></span><span id="m-state">linking…</span>
+      </div>
+    </div>
+
+    <div class="m-stage">
+
+      <!-- STEP 1: Pairing confirm -->
+      <div class="m-step active" data-step="paired">
+        <div class="m-card">
+          <div class="tag">01 // PAIR</div>
+          <h2>Device linked.</h2>
+          <p>You are now bonded to the obsidian arm. Continue to choose your timepiece.</p>
+          <button class="btn" id="btn-continue-1">Choose Watch</button>
+        </div>
+      </div>
+
+      <!-- STEP 2: Watch selection -->
+      <div class="m-step" data-step="select">
+        <div class="m-card">
+          <div class="tag">02 // SELECT</div>
+          <h2>Select your timepiece.</h2>
+          <p>Each variant maps to a live material. Tap to swap on the desktop scene.</p>
+          <div class="watches" id="watches"></div>
+          <button class="btn" id="btn-continue-2">Continue</button>
+        </div>
+      </div>
+
+      <!-- STEP 3: Permissions -->
+      <div class="m-step" data-step="perm">
+        <div class="m-card">
+          <div class="tag">03 // GRANT</div>
+          <h2>Hold the phone like the watch.</h2>
+          <p>We need motion sensor access to map your wrist into 3D space. Hold your phone face-up, as if you were wearing the timepiece.</p>
+          <button class="btn" id="btn-perm">Enable Motion</button>
+          <div style="height: 10px;"></div>
+          <button class="btn ghost" id="btn-skip-perm">Use Touch Instead</button>
+        </div>
+      </div>
+
+      <!-- STEP 4: Calibration -->
+      <div class="m-step" data-step="calib">
+        <div class="m-card">
+          <div class="tag">04 // CALIBRATE</div>
+          <h2>Center your wrist.</h2>
+          <p>Hold steady in the neutral position. Align the dot inside the ring, then lock.</p>
+          <div class="calib-circle">
+            <div class="calib-target"></div>
+            <div class="calib-dot" id="calib-dot"></div>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="btn-recalib">Recenter</button>
+            <button class="btn" id="btn-lock">Lock</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 5: Active -->
+      <div class="m-step" data-step="active">
+        <div class="m-card">
+          <div class="tag">05 // LIVE</div>
+          <h2 id="active-title">Controller live.</h2>
+          <p>Move your wrist. The obsidian arm will follow with cinematic delay.</p>
+
+          <div id="touchpad-wrap" class="hidden">
+            <div class="touchpad" id="touchpad">
+              <div class="tp-dot" id="tp-dot"></div>
+            </div>
+          </div>
+
+          <div class="bars" id="bars" style="margin-bottom: 14px;"></div>
+          <div class="row">
+            <button class="btn ghost" id="btn-back-watch">Change Watch</button>
+            <button class="btn ghost" id="btn-recalib-2">Recenter</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="m-foot">OBSIDIAN ✦ NEON DIVISION • SESSION <span id="m-sess">—</span></div>
+  </div>
+
+  <div id="toast" class="toast">Linked.</div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="/mobile.js"></script>
+</body>
+</html>
