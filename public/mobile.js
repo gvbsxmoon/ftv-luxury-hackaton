@@ -88,6 +88,9 @@
   // compute (qZeroInv * qNow) and extract the twist around the device's X axis.
   const qZeroInv = [1, 0, 0, 0]; // [w, x, y, z]
   let lastUnwrapped = 0;          // continuous twist angle (rad), unwrapped from -PI..PI
+  let smoothed = 0;               // exponentially-smoothed angle sent to desktop
+  const SMOOTH_ALPHA = 0.35;      // 0 = no signal, 1 = no smoothing
+  const MAX_FRAME_JUMP = 0.6;     // rad (~34°): drop spikes above this between frames
 
   let lastSent = 0;
   const SEND_HZ = 60;
@@ -178,6 +181,7 @@
           const inv = quatInv(qNow);
           qZeroInv[0] = inv[0]; qZeroInv[1] = inv[1]; qZeroInv[2] = inv[2]; qZeroInv[3] = inv[3];
           lastUnwrapped = 0;
+          smoothed = 0;
           isCalibrated = true;
           haptic([20, 40, 80]);
           showToast('Calibrated — pick up the phone');
@@ -209,18 +213,29 @@
 
     const qRel = quatMul(qZeroInv, qNow);
     const raw = twistAroundX(qRel);              // [-PI, PI]
-    lastUnwrapped = unwrap(lastUnwrapped, raw);  // continuous angle (rad), no flips
-    const angleRad = lastUnwrapped;
+    const candidate = unwrap(lastUnwrapped, raw);
+    // Spike rejection: ignore frames that jump more than MAX_FRAME_JUMP rad.
+    let dropped = false;
+    if (Math.abs(candidate - lastUnwrapped) > MAX_FRAME_JUMP) {
+      dropped = true;
+    } else {
+      lastUnwrapped = candidate;
+    }
+    // Exponential smoothing on top of the unwrapped angle.
+    smoothed += (lastUnwrapped - smoothed) * SMOOTH_ALPHA;
+    const angleRad = smoothed;
     socket.emit('armPitch', { angle: angleRad });
     pulseBars();
 
-    // Throttled debug log
     if (now - lastLog > 100) {
       lastLog = now;
       const a = (e.alpha == null ? 'null' : e.alpha.toFixed(1));
       console.log(
         `gyro a=${a} b=${lastBeta.toFixed(1)} g=${lastGamma.toFixed(1)} ` +
-        `twistRaw=${(raw * 180 / Math.PI).toFixed(1)} unwrap=${(lastUnwrapped * 180 / Math.PI).toFixed(1)}`
+        `twistRaw=${(raw * 180 / Math.PI).toFixed(1)} ` +
+        `unwrap=${(lastUnwrapped * 180 / Math.PI).toFixed(1)} ` +
+        `smooth=${(smoothed * 180 / Math.PI).toFixed(1)}` +
+        (dropped ? ' [dropped spike]' : '')
       );
     }
   }
@@ -232,8 +247,9 @@
 
   $('btn-recalib-2').addEventListener('click', () => {
     isCalibrated = false;
-    zeroBeta = null;
     levelSince = null;
+    lastUnwrapped = 0;
+    smoothed = 0;
     showToast('Place phone flat to recalibrate');
     goto('calib');
   });
