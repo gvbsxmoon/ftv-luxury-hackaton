@@ -5,7 +5,6 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ============== Session bootstrap ==============
 const $ = (id) => document.getElementById(id);
@@ -94,16 +93,57 @@ scene.background = null;
 scene.fog = new THREE.FogExp2(0x05030a, 0.18);
 
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.05, 100);
-camera.position.set(0, 0.05, 2.4);
-camera.lookAt(0, 0, 0);
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.target.set(0, 0, 0);
-controls.minDistance = 0.6;
-controls.maxDistance = 6;
-controls.update();
+// Initial camera + orbit target. Press M while playing to copy current values into clipboard.
+const CAMERA_DEFAULTS = {
+  pos: { x: 2.299, y: -0.158, z: 0.672 },
+  target: { x: 0, y: 0, z: 0 },
+};
+
+camera.position.set(CAMERA_DEFAULTS.pos.x, CAMERA_DEFAULTS.pos.y, CAMERA_DEFAULTS.pos.z);
+camera.lookAt(CAMERA_DEFAULTS.target.x, CAMERA_DEFAULTS.target.y, CAMERA_DEFAULTS.target.z);
+
+// Custom single-axis mouse rotation: drag to pivot the camera around the world-space
+// red X axis of the stage (stageGroup's local +X). The axis stays fixed in world space.
+const cameraTarget = new THREE.Vector3(CAMERA_DEFAULTS.target.x, CAMERA_DEFAULTS.target.y, CAMERA_DEFAULTS.target.z);
+camera.lookAt(cameraTarget);
+
+(function setupSingleAxisOrbit() {
+  let dragging = false;
+  let lastY = 0;
+  const ROT_PER_PX = 0.0055;
+
+  renderer.domElement.addEventListener('mousedown', (e) => {
+    dragging = true;
+    lastY = e.clientY;
+  });
+  window.addEventListener('mouseup', () => { dragging = false; });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const dy = e.clientY - lastY;
+    lastY = e.clientY;
+
+    const axis = new THREE.Vector3(1, 0, 0)
+      .applyQuaternion(stageGroup.getWorldQuaternion(new THREE.Quaternion()))
+      .normalize();
+    const pivot = stageGroup.getWorldPosition(new THREE.Vector3());
+
+    const angle = dy * ROT_PER_PX;
+    const offset = camera.position.clone().sub(pivot);
+    offset.applyAxisAngle(axis, angle);
+    camera.position.copy(pivot).add(offset);
+
+    cameraTarget.sub(pivot).applyAxisAngle(axis, angle).add(pivot);
+    camera.up.applyAxisAngle(axis, angle);
+    camera.lookAt(cameraTarget);
+  });
+})();
+
+// Stub kept so existing code referencing `controls.update()` and `controls.target` stays valid.
+const controls = {
+  target: cameraTarget,
+  update: () => {},
+};
 
 // Environment for PBR reflections
 const pmrem = new THREE.PMREMGenerator(renderer);
@@ -159,25 +199,37 @@ window.addEventListener('resize', () => {
 // ============== Models ==============
 const loader = new GLTFLoader();
 
-// Arm composition: place anchor on the LEFT side of frame, fingers pointing RIGHT.
-const armGroup = new THREE.Group();
-armGroup.position.set(-0.45, 0, 0);
-armGroup.visible = false;
-scene.add(armGroup);
+// Stage = arm+watch+axes container. Tune as one unit (initial scene position).
+const stageGroup = new THREE.Group();
+scene.add(stageGroup);
 
-// Orientation offset applied to the arm model so its rest pose is "fingers right, palm up".
-// Tunable with the same letter keys (Shift for fine), see ARM tuner below.
-const ARM_REST = {
-  rx: 0, ry: 0, rz: 0,
+// armGroup = arm+watch only (positioned relative to the local axes/origin of stage).
+const armGroup = new THREE.Group();
+armGroup.visible = false;
+stageGroup.add(armGroup);
+
+// Whole arm+watch box transform — relative to stage origin (where the axes sit).
+const ARM_OFFSET = {
+  x: 0.180, y: -0.030, z: -0.060,
+  rx: 0.24, ry: 3.84, rz: -0.08,
+  s: 0.75,
+};
+
+// Stage transform — moves arm+watch+axes together.
+const STAGE_OFFSET = {
+  x: 0.180, y: 0.000, z: -0.360,
+  rx: 0.00, ry: -1.92, rz: 0.00,
+  s: 1.0,
 };
 
 let armRoot = null;        // GLTF arm scene root
-let armPivot = null;       // intermediate node we rotate (arm orientation)
-let wristNode = null;      // bone or node where watch mounts
-let watchHolder = null;    // child of wristNode that holds the watch
-let watchModel = null;     // current watch instance
-let watchVariants = {};    // id -> Object3D (clones)
+let armPivot = null;       // node we rotate live from phone
+let wristNode = null;
+let watchHolder = null;
+let watchModel = null;
+let watchVariants = {};
 let activeWatchId = 'chrono-01';
+let axesHelper = null;     // toggled with X
 
 function obsidianizeArm(root) {
   root.traverse((o) => {
@@ -259,13 +311,31 @@ async function loadModels() {
   const armCenter1 = armBox1.getCenter(new THREE.Vector3());
   armRoot.position.sub(armCenter1);
 
-  // Apply rest-pose orientation to the model so the pivot only handles the X tilt.
-  armRoot.rotation.set(ARM_REST.rx, ARM_REST.ry, ARM_REST.rz);
-
   // Pivot we rotate to follow gyroscope (rotation around local X = arm length axis).
   armPivot = new THREE.Group();
   armPivot.add(armRoot);
   armGroup.add(armPivot);
+
+  applyArmOffset();
+  applyStageOffset();
+
+  // Local axes helper, toggled with X. Lives on armPivot so it shows the arm's frame.
+  // Built manually so colors stay readable through bloom+tonemap.
+  axesHelper = new THREE.Group();
+  const axisLen = 1.0;
+  const mkAxis = (color, dir) => {
+    const geom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(dir.x * axisLen, dir.y * axisLen, dir.z * axisLen),
+    ]);
+    const mat = new THREE.LineBasicMaterial({ color, toneMapped: false, transparent: false });
+    return new THREE.Line(geom, mat);
+  };
+  axesHelper.add(mkAxis(0xff2a2a, new THREE.Vector3(1, 0, 0))); // X red
+  axesHelper.add(mkAxis(0x22ff44, new THREE.Vector3(0, 1, 0))); // Y green
+  axesHelper.add(mkAxis(0x3aa0ff, new THREE.Vector3(0, 0, 1))); // Z blue
+  axesHelper.visible = false;
+  stageGroup.add(axesHelper); // assi figli dello stage: fermi quando muovi il braccio col tuner X, ma seguono il tuner G
 
   // Recompute box AFTER placement to find a wrist anchor (rightmost / "tip" along longest axis).
   armRoot.updateMatrixWorld(true);
@@ -486,6 +556,88 @@ const WATCH_OFFSET = {
   s: 0.65,
 };
 
+function applyStageOffset() {
+  if (!stageGroup) return;
+  stageGroup.position.set(STAGE_OFFSET.x, STAGE_OFFSET.y, STAGE_OFFSET.z);
+  stageGroup.rotation.set(STAGE_OFFSET.rx, STAGE_OFFSET.ry, STAGE_OFFSET.rz);
+  stageGroup.scale.setScalar(STAGE_OFFSET.s);
+  updateStageTunerHUD();
+}
+
+let stageTunerEl = null;
+function buildStageTuner() {
+  const el = document.createElement('div');
+  el.id = 'stage-tuner';
+  el.style.cssText = `
+    position: fixed; left: 22px; top: 22px; z-index: 50;
+    background: rgba(40,8,30,0.85); border: 1px solid rgba(255,180,90,0.4);
+    border-radius: 10px; padding: 12px 14px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px; color: #ffe6c8; min-width: 300px;
+    backdrop-filter: blur(10px);
+  `;
+  el.innerHTML = `
+    <div style="letter-spacing:0.25em; color:#ffb45a; margin-bottom:8px;">STAGE TUNER &nbsp; <span style="opacity:0.6">[G to toggle]</span></div>
+    <div id="stage-tuner-vals" style="line-height:1.7;"></div>
+    <div style="margin-top:10px; opacity:0.75; line-height:1.6; font-size:10px;">
+      Same keys as ARM tuner — moves arm+watch+axes together
+    </div>
+  `;
+  document.body.appendChild(el);
+  return el;
+}
+function updateStageTunerHUD() {
+  if (!stageTunerEl) return;
+  const v = STAGE_OFFSET;
+  stageTunerEl.querySelector('#stage-tuner-vals').innerHTML = `
+    pos:&nbsp; x ${v.x.toFixed(3)} &nbsp; y ${v.y.toFixed(3)} &nbsp; z ${v.z.toFixed(3)}<br/>
+    rot:&nbsp; x ${v.rx.toFixed(2)} &nbsp; y ${v.ry.toFixed(2)} &nbsp; z ${v.rz.toFixed(2)}<br/>
+    scale: ${v.s.toFixed(2)}
+  `;
+}
+
+function applyArmOffset() {
+  if (!armGroup) return;
+  armGroup.position.set(ARM_OFFSET.x, ARM_OFFSET.y, ARM_OFFSET.z);
+  armGroup.rotation.set(ARM_OFFSET.rx, ARM_OFFSET.ry, ARM_OFFSET.rz);
+  armGroup.scale.setScalar(ARM_OFFSET.s);
+  updateArmTunerHUD();
+}
+
+let armBoxTunerEl = null;
+function buildArmTuner() {
+  const el = document.createElement('div');
+  el.id = 'arm-tuner';
+  el.style.cssText = `
+    position: fixed; left: 22px; bottom: 22px; z-index: 50;
+    background: rgba(8,16,40,0.85); border: 1px solid rgba(110,252,255,0.4);
+    border-radius: 10px; padding: 12px 14px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px; color: #d5f7ff; min-width: 300px;
+    backdrop-filter: blur(10px);
+  `;
+  el.innerHTML = `
+    <div style="letter-spacing:0.25em; color:#6efcff; margin-bottom:8px;">ARM BOX TUNER &nbsp; <span style="opacity:0.6">[X to toggle]</span></div>
+    <div id="arm-tuner-vals" style="line-height:1.7;"></div>
+    <div style="margin-top:10px; opacity:0.75; line-height:1.6; font-size:10px;">
+      <b>← → ↑ ↓</b> move XY &nbsp; <b>Z/V</b> move Z<br/>
+      <b>I/K</b> rotX &nbsp; <b>J/L</b> rotY &nbsp; <b>U/O</b> rotZ<br/>
+      <b>+/-</b> scale &nbsp; <b>R</b> reset &nbsp; <b>C</b> copy &nbsp; (Shift = fine)
+    </div>
+  `;
+  document.body.appendChild(el);
+  return el;
+}
+function updateArmTunerHUD() {
+  if (!armBoxTunerEl) return;
+  const v = ARM_OFFSET;
+  armBoxTunerEl.querySelector('#arm-tuner-vals').innerHTML = `
+    pos:&nbsp; x ${v.x.toFixed(3)} &nbsp; y ${v.y.toFixed(3)} &nbsp; z ${v.z.toFixed(3)}<br/>
+    rot:&nbsp; x ${v.rx.toFixed(2)} &nbsp; y ${v.ry.toFixed(2)} &nbsp; z ${v.rz.toFixed(2)}<br/>
+    scale: ${v.s.toFixed(2)}
+  `;
+}
+
 function applyWatchOffset() {
   if (!watchHolder) return;
   // We tweak the watch model itself (children of watchHolder), so the auto-placed
@@ -532,20 +684,113 @@ function updateTunerHUD() {
 }
 
 window.addEventListener('keydown', (e) => {
-  // Arm rest-pose tuner (independent of watch tuner): arrows + ,/.
-  if (armRoot && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === ',' || e.key === '.')) {
-    const stepR = e.shiftKey ? 0.02 : 0.08;
-    if (e.key === 'ArrowLeft')  ARM_REST.ry -= stepR;
-    if (e.key === 'ArrowRight') ARM_REST.ry += stepR;
-    if (e.key === 'ArrowUp')    ARM_REST.rx -= stepR;
-    if (e.key === 'ArrowDown')  ARM_REST.rx += stepR;
-    if (e.key === ',')          ARM_REST.rz -= stepR;
-    if (e.key === '.')          ARM_REST.rz += stepR;
-    armRoot.rotation.set(ARM_REST.rx, ARM_REST.ry, ARM_REST.rz);
-    console.log('ARM_REST', JSON.stringify(ARM_REST));
-    e.preventDefault();
+  // Copy current camera pos + orbit target to clipboard, ready to paste into CAMERA_DEFAULTS.
+  if (e.key === 'm' || e.key === 'M') {
+    const data = {
+      pos:    { x: +camera.position.x.toFixed(3), y: +camera.position.y.toFixed(3), z: +camera.position.z.toFixed(3) },
+      target: { x: +controls.target.x.toFixed(3),  y: +controls.target.y.toFixed(3),  z: +controls.target.z.toFixed(3) },
+    };
+    const txt = JSON.stringify(data, null, 2);
+    navigator.clipboard?.writeText(txt);
+    console.log('Camera:', txt);
     return;
   }
+
+  if (e.key === 'x' || e.key === 'X') {
+    if (axesHelper) axesHelper.visible = !axesHelper.visible;
+    if (!armBoxTunerEl) armBoxTunerEl = buildArmTuner();
+    armBoxTunerEl.style.display = axesHelper && axesHelper.visible ? 'block' : 'none';
+    if (stageTunerEl) stageTunerEl.style.display = 'none';
+    updateArmTunerHUD();
+    return;
+  }
+
+  // Toggle Stage tuner (moves arm+watch+axes together).
+  if (e.key === 'g' || e.key === 'G') {
+    if (!stageTunerEl) stageTunerEl = buildStageTuner();
+    const showing = stageTunerEl.style.display !== 'none' && stageTunerEl.style.display !== '';
+    stageTunerEl.style.display = showing ? 'none' : 'block';
+    if (!showing && armBoxTunerEl) armBoxTunerEl.style.display = 'none';
+    updateStageTunerHUD();
+    return;
+  }
+
+  // Stage tuner (active when its panel is visible).
+  if (stageTunerEl && stageTunerEl.style.display === 'block') {
+    const stepP = e.shiftKey ? 0.005 : 0.03;
+    const stepR = e.shiftKey ? 0.02  : 0.08;
+    const stepS = e.shiftKey ? 0.01  : 0.05;
+    const k = e.key.toLowerCase();
+    let handled = true;
+    if      (e.key === 'ArrowLeft')  STAGE_OFFSET.x -= stepP;
+    else if (e.key === 'ArrowRight') STAGE_OFFSET.x += stepP;
+    else if (e.key === 'ArrowUp')    STAGE_OFFSET.y += stepP;
+    else if (e.key === 'ArrowDown')  STAGE_OFFSET.y -= stepP;
+    else if (k === 'z')              STAGE_OFFSET.z -= stepP;
+    else if (k === 'v')              STAGE_OFFSET.z += stepP;
+    else if (k === 'i')              STAGE_OFFSET.rx -= stepR;
+    else if (k === 'k')              STAGE_OFFSET.rx += stepR;
+    else if (k === 'j')              STAGE_OFFSET.ry -= stepR;
+    else if (k === 'l')              STAGE_OFFSET.ry += stepR;
+    else if (k === 'u')              STAGE_OFFSET.rz -= stepR;
+    else if (k === 'o')              STAGE_OFFSET.rz += stepR;
+    else if (e.key === '+' || e.key === '=') STAGE_OFFSET.s += stepS;
+    else if (e.key === '-' || e.key === '_') STAGE_OFFSET.s -= stepS;
+    else if (k === 'r') {
+      STAGE_OFFSET.x = 0.180; STAGE_OFFSET.y = 0.000; STAGE_OFFSET.z = -0.360;
+      STAGE_OFFSET.rx = 0.00; STAGE_OFFSET.ry = -1.92; STAGE_OFFSET.rz = 0.00;
+      STAGE_OFFSET.s = 1.0;
+    } else if (k === 'c') {
+      const txt = JSON.stringify(STAGE_OFFSET, null, 2);
+      navigator.clipboard?.writeText(txt);
+      console.log('Copied STAGE_OFFSET:', txt);
+    } else handled = false;
+
+    if (handled) {
+      applyStageOffset();
+      e.preventDefault();
+      return;
+    }
+  }
+
+  // Arm-box tuner (active only when X-axes are visible).
+  if (axesHelper && axesHelper.visible) {
+    const stepP = e.shiftKey ? 0.005 : 0.03;
+    const stepR = e.shiftKey ? 0.02  : 0.08;
+    const stepS = e.shiftKey ? 0.01  : 0.05;
+    const k = e.key.toLowerCase();
+    let handled = true;
+    if      (e.key === 'ArrowLeft')  ARM_OFFSET.x -= stepP;
+    else if (e.key === 'ArrowRight') ARM_OFFSET.x += stepP;
+    else if (e.key === 'ArrowUp')    ARM_OFFSET.y += stepP;
+    else if (e.key === 'ArrowDown')  ARM_OFFSET.y -= stepP;
+    else if (k === 'z')              ARM_OFFSET.z -= stepP;
+    else if (k === 'v')              ARM_OFFSET.z += stepP;
+    else if (k === 'i')              ARM_OFFSET.rx -= stepR;
+    else if (k === 'k')              ARM_OFFSET.rx += stepR;
+    else if (k === 'j')              ARM_OFFSET.ry -= stepR;
+    else if (k === 'l')              ARM_OFFSET.ry += stepR;
+    else if (k === 'u')              ARM_OFFSET.rz -= stepR;
+    else if (k === 'o')              ARM_OFFSET.rz += stepR;
+    else if (e.key === '+' || e.key === '=') ARM_OFFSET.s += stepS;
+    else if (e.key === '-' || e.key === '_') ARM_OFFSET.s -= stepS;
+    else if (k === 'r') {
+      ARM_OFFSET.x = 0.180; ARM_OFFSET.y = -0.030; ARM_OFFSET.z = -0.060;
+      ARM_OFFSET.rx = 0.24; ARM_OFFSET.ry = 3.84; ARM_OFFSET.rz = -0.08;
+      ARM_OFFSET.s = 0.75;
+    } else if (k === 'c') {
+      const txt = JSON.stringify(ARM_OFFSET, null, 2);
+      navigator.clipboard?.writeText(txt);
+      console.log('Copied ARM_OFFSET:', txt);
+    } else handled = false;
+
+    if (handled) {
+      applyArmOffset();
+      e.preventDefault();
+      return;
+    }
+  }
+
   if (e.key === 't' || e.key === 'T') {
     if (!tunerEl) tunerEl = buildTuner();
     tunerEl.style.display = tunerEl.style.display === 'none' ? 'block' : 'none';
