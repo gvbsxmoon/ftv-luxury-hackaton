@@ -220,9 +220,9 @@ const ARM_OFFSET = {
 
 // Stage transform — moves arm+watch+axes together.
 const STAGE_OFFSET = {
-  x: 0.180, y: 0.000, z: -0.360,
+  x: 0.510, y: 0.180, z: -0.360,
   rx: 0.00, ry: -1.92, rz: 0.00,
-  s: 1.0,
+  s: 1.35,
 };
 
 let armRoot = null;        // GLTF arm scene root
@@ -469,8 +469,8 @@ function startBgm() {
   if (bgmStarted) return;
   const audio = $('bgm');
   if (!audio) return;
-  audio.volume = 0;
   audio.muted = false;
+  audio.volume = 0;
   const playPromise = audio.play();
   const onPlaying = () => {
     bgmStarted = true;
@@ -479,15 +479,39 @@ function startBgm() {
   };
   if (playPromise && typeof playPromise.then === 'function') {
     playPromise.then(onPlaying).catch(() => {
-      // Autoplay blocked — show mute button so the user can click to enable.
-      $('mute-btn').classList.remove('hidden');
-      $('mute-btn').classList.add('muted');
-      bgmMuted = true;
+      // Autoplay blocked — wait for any user gesture, then start.
+      const armOnGesture = () => {
+        audio.muted = false;
+        audio.play().then(onPlaying).catch(() => {});
+        window.removeEventListener('pointerdown', armOnGesture);
+        window.removeEventListener('keydown', armOnGesture);
+      };
+      window.addEventListener('pointerdown', armOnGesture, { once: true });
+      window.addEventListener('keydown', armOnGesture, { once: true });
     });
   } else {
     onPlaying();
   }
 }
+
+// Best-effort: try to "warm" the audio element on the very first user gesture
+// the page receives (even before mobile pairing) so playback is unlocked.
+(function unlockAudioOnFirstGesture() {
+  const armed = { done: false };
+  function onGesture() {
+    if (armed.done) return;
+    armed.done = true;
+    const audio = $('bgm');
+    if (!audio) return;
+    audio.muted = true;
+    audio.play().then(() => {
+      audio.pause();
+      audio.muted = false;
+    }).catch(() => {});
+  }
+  window.addEventListener('pointerdown', onGesture, { once: true });
+  window.addEventListener('keydown', onGesture, { once: true });
+})();
 
 function fadeBgmTo(targetVol, durationMs) {
   const audio = $('bgm');
@@ -749,9 +773,9 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === '+' || e.key === '=') STAGE_OFFSET.s += stepS;
     else if (e.key === '-' || e.key === '_') STAGE_OFFSET.s -= stepS;
     else if (k === 'r') {
-      STAGE_OFFSET.x = 0.180; STAGE_OFFSET.y = 0.000; STAGE_OFFSET.z = -0.360;
+      STAGE_OFFSET.x = 0.510; STAGE_OFFSET.y = 0.180; STAGE_OFFSET.z = -0.360;
       STAGE_OFFSET.rx = 0.00; STAGE_OFFSET.ry = -1.92; STAGE_OFFSET.rz = 0.00;
-      STAGE_OFFSET.s = 1.0;
+      STAGE_OFFSET.s = 1.35;
     } else if (k === 'c') {
       const txt = JSON.stringify(STAGE_OFFSET, null, 2);
       navigator.clipboard?.writeText(txt);

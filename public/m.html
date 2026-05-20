@@ -26,19 +26,8 @@
         <div class="m-card">
           <div class="tag">01 // PAIR</div>
           <h2>Device linked.</h2>
-          <p>You are now bonded to the obsidian arm. Continue to choose your timepiece.</p>
-          <button class="btn" id="btn-continue-1">Choose Watch</button>
-        </div>
-      </div>
-
-      <!-- STEP 2: Watch selection -->
-      <div class="m-step" data-step="select">
-        <div class="m-card">
-          <div class="tag">02 // SELECT</div>
-          <h2>Select your timepiece.</h2>
-          <p>Each variant maps to a live material. Tap to swap on the desktop scene.</p>
-          <div class="watches" id="watches"></div>
-          <button class="btn" id="btn-continue-2">Continue</button>
+          <p>You are now bonded to the obsidian arm.</p>
+          <button class="btn" id="btn-continue-1">Continue</button>
         </div>
       </div>
 
@@ -47,10 +36,8 @@
         <div class="m-card">
           <div class="tag">03 // GRANT</div>
           <h2>Enable motion sensors.</h2>
-          <p>We need access to your phone's gyroscope to control the arm in 3D space.</p>
+          <p>The obsidian arm follows the tilt of your wrist. To do that, we read your phone's gyroscope — the same sensor your camera app uses to know when the device rotates. No data ever leaves the session.</p>
           <button class="btn" id="btn-perm">Enable Motion</button>
-          <div style="height: 10px;"></div>
-          <button class="btn ghost" id="btn-skip-perm">Use Touch Instead</button>
         </div>
       </div>
 
@@ -75,15 +62,8 @@
           <h2 id="active-title">Controller live.</h2>
           <p>Move your wrist. The obsidian arm will follow with cinematic delay.</p>
 
-          <div id="touchpad-wrap" class="hidden">
-            <div class="touchpad" id="touchpad">
-              <div class="tp-dot" id="tp-dot"></div>
-            </div>
-          </div>
-
           <div class="bars" id="bars" style="margin-bottom: 14px;"></div>
           <div class="row">
-            <button class="btn ghost" id="btn-back-watch">Change Watch</button>
             <button class="btn ghost" id="btn-recalib-2">Recenter</button>
           </div>
         </div>

@@ -42,33 +42,9 @@
     });
   }
 
-  $('btn-continue-1').addEventListener('click', () => goto('select'));
-
-  // ---------------- watches (single model for now) ----------------
-  const watches = [
-    { id: 'chrono-01', name: 'CHRONO 01', meta: 'Obsidian — luxury edition' },
-  ];
-  const watchesEl = $('watches');
-  let activeWatch = 'chrono-01';
-  watches.forEach((w) => {
-    const el = document.createElement('div');
-    el.className = 'watch' + (w.id === activeWatch ? ' selected' : '');
-    el.dataset.id = w.id;
-    el.innerHTML = `<div class="swatch"></div><div class="name">${w.name}</div><div class="meta">${w.meta}</div>`;
-    el.addEventListener('click', () => {
-      activeWatch = w.id;
-      document.querySelectorAll('.watch').forEach((x) => x.classList.toggle('selected', x.dataset.id === w.id));
-      socket.emit('watchSelect', { id: w.id });
-      haptic(10);
-    });
-    watchesEl.appendChild(el);
-  });
-
-  $('btn-continue-2').addEventListener('click', () => goto('perm'));
+  $('btn-continue-1').addEventListener('click', () => goto('perm'));
 
   // ---------------- permissions ----------------
-  let useTouchFallback = false;
-
   $('btn-perm').addEventListener('click', async () => {
     let okOrient = true;
     try {
@@ -88,21 +64,9 @@
       startGyro();
       goto('calib');
     } else {
-      showToast('Motion denied — using touch');
-      enableTouchFallback();
+      showToast('Motion denied — please enable in browser settings');
     }
   });
-
-  $('btn-skip-perm').addEventListener('click', () => enableTouchFallback());
-
-  function enableTouchFallback() {
-    useTouchFallback = true;
-    socket.emit('controlMode', { mode: 'touch' });
-    goto('active');
-    $('touchpad-wrap').classList.remove('hidden');
-    $('active-title').textContent = 'Touch controller live.';
-    setupTouchpad();
-  }
 
   // ---------------- gyroscope: surface-level detection + beta streaming ----------------
   // The phone is laid face-up on a flat surface when:
@@ -117,16 +81,72 @@
 
   let lastBeta = 0;
   let lastGamma = 0;
-  let levelSince = null;     // timestamp when we first became "level" continuously
-  let zeroBeta = null;       // baseline beta (set when leveled)
+  let levelSince = null;
   let isCalibrated = false;
+
+  // Quaternion-based: store inverse of the calibration quaternion, then per-frame
+  // compute (qZeroInv * qNow) and extract the twist around the device's X axis.
+  const qZeroInv = [1, 0, 0, 0]; // [w, x, y, z]
+  let lastUnwrapped = 0;          // continuous twist angle (rad), unwrapped from -PI..PI
 
   let lastSent = 0;
   const SEND_HZ = 60;
 
+  // ---- quaternion helpers (inline, no THREE on mobile) ----
+  function eulerToQuat(alphaDeg, betaDeg, gammaDeg) {
+    // Browser device-orientation convention: ZXY intrinsic.
+    const a = (alphaDeg || 0) * Math.PI / 180;
+    const b = (betaDeg  || 0) * Math.PI / 180;
+    const g = (gammaDeg || 0) * Math.PI / 180;
+    const cZ = Math.cos(a / 2), sZ = Math.sin(a / 2);
+    const cX = Math.cos(b / 2), sX = Math.sin(b / 2);
+    const cY = Math.cos(g / 2), sY = Math.sin(g / 2);
+    // q = qZ * qX * qY
+    // First qZX = qZ * qX
+    const w1 = cZ * cX, x1 = cZ * sX, y1 = sZ * sX, z1 = sZ * cX;
+    // Then qZX * qY
+    const w = w1 * cY - y1 * sY;
+    const x = x1 * cY + z1 * sY;
+    const y = y1 * cY + w1 * sY;
+    const z = z1 * cY - x1 * sY;
+    return [w, x, y, z];
+  }
+  function quatMul(q1, q2) {
+    const [w1, x1, y1, z1] = q1;
+    const [w2, x2, y2, z2] = q2;
+    return [
+      w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+      w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+      w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+      w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+    ];
+  }
+  function quatInv(q) {
+    return [q[0], -q[1], -q[2], -q[3]];
+  }
+  // Twist around the local X axis (returns angle in rad in [-PI, PI]).
+  function twistAroundX(q) {
+    // Project onto the X-twist component: t = (w, x, 0, 0) normalized.
+    const w = q[0], x = q[1];
+    const len = Math.hypot(w, x) || 1;
+    const tw = w / len, tx = x / len;
+    let angle = 2 * Math.atan2(tx, tw);
+    if (angle >  Math.PI) angle -= 2 * Math.PI;
+    if (angle < -Math.PI) angle += 2 * Math.PI;
+    return angle;
+  }
+  // Continuous unwrap: returns prev + shortest-path delta to `current`.
+  function unwrap(prev, current) {
+    let d = current - prev;
+    while (d >  Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    return prev + d;
+  }
+
   function onDeviceOrientation(e) {
     lastBeta  = e.beta  || 0;
     lastGamma = e.gamma || 0;
+    const qNow = eulerToQuat(e.alpha, e.beta, e.gamma);
 
     if (!isCalibrated) {
       // Surface-level detection
@@ -154,12 +174,14 @@
         }
 
         if (heldMs >= LEVEL_HOLD_MS) {
-          // LOCK: this is our zero.
-          zeroBeta = lastBeta;
+          // LOCK: capture the inverse of the current quaternion as our zero.
+          const inv = quatInv(qNow);
+          qZeroInv[0] = inv[0]; qZeroInv[1] = inv[1]; qZeroInv[2] = inv[2]; qZeroInv[3] = inv[3];
+          lastUnwrapped = 0;
           isCalibrated = true;
           haptic([20, 40, 80]);
           showToast('Calibrated — pick up the phone');
-          socket.emit('calibrationData', { zeroBeta });
+          socket.emit('calibrationData', { ok: true });
           goto('active');
           $('active-title').textContent = 'Controller live.';
         }
@@ -180,27 +202,25 @@
       return;
     }
 
-    // Calibrated: stream relative beta as the arm-X-axis angle.
+    // Calibrated: extract the twist around the device's X axis from the relative quaternion.
     const now = performance.now();
     if (now - lastSent < 1000 / SEND_HZ) return;
     lastSent = now;
 
-    // Relative angle since calibration zero.
-    let delta = lastBeta - zeroBeta;
-    const rawDelta = delta;
-    // Clamp to +/-90° so the arm cannot flip
-    delta = clamp(delta, -90, 90);
-    const angleRad = delta * Math.PI / 180;
+    const qRel = quatMul(qZeroInv, qNow);
+    const raw = twistAroundX(qRel);              // [-PI, PI]
+    lastUnwrapped = unwrap(lastUnwrapped, raw);  // continuous angle (rad), no flips
+    const angleRad = lastUnwrapped;
     socket.emit('armPitch', { angle: angleRad });
     pulseBars();
 
-    // Throttled debug log: alpha/beta/gamma raw, zeroBeta, raw delta, clamped delta.
+    // Throttled debug log
     if (now - lastLog > 100) {
       lastLog = now;
       const a = (e.alpha == null ? 'null' : e.alpha.toFixed(1));
       console.log(
         `gyro a=${a} b=${lastBeta.toFixed(1)} g=${lastGamma.toFixed(1)} ` +
-        `zeroB=${zeroBeta.toFixed(1)} rawDelta=${rawDelta.toFixed(1)} clamped=${delta.toFixed(1)}`
+        `twistRaw=${(raw * 180 / Math.PI).toFixed(1)} unwrap=${(lastUnwrapped * 180 / Math.PI).toFixed(1)}`
       );
     }
   }
@@ -211,19 +231,12 @@
   }
 
   $('btn-recalib-2').addEventListener('click', () => {
-    if (useTouchFallback) {
-      tpX = 0; sendTouchpad();
-      showToast('Touch centered');
-      return;
-    }
     isCalibrated = false;
     zeroBeta = null;
     levelSince = null;
     showToast('Place phone flat to recalibrate');
     goto('calib');
   });
-
-  $('btn-back-watch').addEventListener('click', () => goto('select'));
 
   // ---------------- bars (signal viz) ----------------
   const bars = $('bars');
@@ -241,55 +254,6 @@
       setTimeout(() => el.classList.remove('on'), 280);
     }
     pulseIdx = (pulseIdx + 1) % bars.children.length;
-  }
-
-  // ---------------- touch fallback ----------------
-  let tpX = 0;
-  function setupTouchpad() {
-    const pad = $('touchpad'), dot = $('tp-dot');
-    let dragging = false, rect = null;
-
-    function onStart(e) {
-      dragging = true;
-      rect = pad.getBoundingClientRect();
-      onMove(e);
-    }
-    function onMove(e) {
-      if (!dragging) return;
-      const t = (e.touches && e.touches[0]) || e;
-      const cx = t.clientX - rect.left - rect.width / 2;
-      const cy = t.clientY - rect.top - rect.height / 2;
-      const ny = clamp(cy / (rect.height / 2), -1, 1);
-      tpX = ny;
-      dot.style.transform = `translate(-50%, calc(-50% + ${cy}px))`;
-      sendTouchpad();
-    }
-    function onEnd() {
-      dragging = false;
-      const start = performance.now();
-      const sy = tpX;
-      function step(t) {
-        const k = Math.min(1, (t - start) / 600);
-        const eo = 1 - Math.pow(1 - k, 3);
-        tpX = sy * (1 - eo);
-        dot.style.transform = `translate(-50%, calc(-50% + ${tpX * rect.height / 2}px))`;
-        sendTouchpad();
-        if (k < 1) requestAnimationFrame(step);
-      }
-      requestAnimationFrame(step);
-    }
-    pad.addEventListener('touchstart', onStart, { passive: true });
-    pad.addEventListener('touchmove', onMove, { passive: true });
-    pad.addEventListener('touchend', onEnd);
-    pad.addEventListener('mousedown', onStart);
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onEnd);
-  }
-
-  function sendTouchpad() {
-    const angle = -tpX * (Math.PI / 3);
-    socket.emit('armPitch', { angle });
-    pulseBars();
   }
 
   // initial step
