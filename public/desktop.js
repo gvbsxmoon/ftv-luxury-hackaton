@@ -108,6 +108,22 @@ camera.lookAt(CAMERA_DEFAULTS.target.x, CAMERA_DEFAULTS.target.y, CAMERA_DEFAULT
 const cameraTarget = new THREE.Vector3(CAMERA_DEFAULTS.target.x, CAMERA_DEFAULTS.target.y, CAMERA_DEFAULTS.target.z);
 camera.lookAt(cameraTarget);
 
+function pivotCameraAroundStageX(angle) {
+  if (!angle) return;
+  const axis = new THREE.Vector3(1, 0, 0)
+    .applyQuaternion(stageGroup.getWorldQuaternion(new THREE.Quaternion()))
+    .normalize();
+  const pivot = stageGroup.getWorldPosition(new THREE.Vector3());
+
+  const offset = camera.position.clone().sub(pivot);
+  offset.applyAxisAngle(axis, angle);
+  camera.position.copy(pivot).add(offset);
+
+  cameraTarget.sub(pivot).applyAxisAngle(axis, angle).add(pivot);
+  camera.up.applyAxisAngle(axis, angle);
+  camera.lookAt(cameraTarget);
+}
+
 (function setupSingleAxisOrbit() {
   let dragging = false;
   let lastY = 0;
@@ -122,20 +138,7 @@ camera.lookAt(cameraTarget);
     if (!dragging) return;
     const dy = e.clientY - lastY;
     lastY = e.clientY;
-
-    const axis = new THREE.Vector3(1, 0, 0)
-      .applyQuaternion(stageGroup.getWorldQuaternion(new THREE.Quaternion()))
-      .normalize();
-    const pivot = stageGroup.getWorldPosition(new THREE.Vector3());
-
-    const angle = dy * ROT_PER_PX;
-    const offset = camera.position.clone().sub(pivot);
-    offset.applyAxisAngle(axis, angle);
-    camera.position.copy(pivot).add(offset);
-
-    cameraTarget.sub(pivot).applyAxisAngle(axis, angle).add(pivot);
-    camera.up.applyAxisAngle(axis, angle);
-    camera.lookAt(cameraTarget);
+    pivotCameraAroundStageX(dy * ROT_PER_PX);
   });
 })();
 
@@ -436,9 +439,10 @@ function onOrientationUpdate(payload) {
   $('hud-quat').textContent = `q: ${q.x.toFixed(2)} ${q.y.toFixed(2)} ${q.z.toFixed(2)} ${q.w.toFixed(2)}`;
 }
 
-// New simple control: phone tilt around its X axis -> arm rotation around its X axis.
-let targetArmPitch = 0;   // radians
-let currentArmPitch = 0;
+// Phone tilt around its X axis -> camera pivots around the stage's red X axis (world space).
+// Arm + watch + axes stay fixed; the camera orbits around them.
+let targetArmPitch = 0;   // radians (from phone)
+let currentArmPitch = 0;  // radians (smoothed, last applied)
 function onArmPitch(payload) {
   targetArmPitch = payload.angle || 0;
   $('hud-quat').textContent = `pitch: ${(targetArmPitch * 180 / Math.PI).toFixed(1)}°`;
@@ -525,11 +529,13 @@ function animate() {
 
   // (preview mode auto-rotation disabled — use mouse OrbitControls instead)
 
-  // Single-axis arm rotation around its local X axis (driven by phone beta delta).
-  if (armPivot) {
+  // Smooth gyro angle and apply the delta as a camera pivot around the stage X axis.
+  {
     const k = Math.min(0.2, 1 - Math.pow(0.0001, dt));
-    currentArmPitch += (targetArmPitch - currentArmPitch) * k;
-    armPivot.rotation.set(currentArmPitch, 0, 0);
+    const next = currentArmPitch + (targetArmPitch - currentArmPitch) * k;
+    const delta = next - currentArmPitch;
+    currentArmPitch = next;
+    pivotCameraAroundStageX(delta);
   }
 
   // Watch accent pulse
