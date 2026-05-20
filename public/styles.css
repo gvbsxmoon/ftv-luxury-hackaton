@@ -62,6 +62,42 @@ code { font-family: 'JetBrains Mono', ui-monospace, monospace; color: var(--neon
 }
 .panel.hidden { opacity: 0; pointer-events: none; transform: translate(-50%, -55%) scale(0.98); filter: blur(8px); }
 
+/* ---- Tap-to-begin overlay ---- */
+#enter-gate {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(60% 50% at 50% 50%, rgba(20,8,40,0.6), rgba(2,0,10,0.95) 80%);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  transition: opacity 0.6s ease;
+  user-select: none;
+}
+#enter-gate.fading { opacity: 0; pointer-events: none; }
+#enter-gate .gate-inner {
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 18px;
+}
+#enter-gate .gate-mark {
+  font-size: 38px; color: var(--neon); text-shadow: 0 0 18px var(--neon), 0 0 40px rgba(177,75,255,0.5);
+  animation: gate-pulse 2.4s ease-in-out infinite;
+}
+#enter-gate .gate-title {
+  font-size: 13px; letter-spacing: 0.5em; text-transform: uppercase; color: var(--neon-soft);
+}
+#enter-gate .gate-cta {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px; letter-spacing: 0.4em; text-transform: uppercase; color: var(--ink);
+  padding: 14px 28px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(20,8,40,0.6);
+  box-shadow: 0 0 24px rgba(177,75,255,0.18) inset, 0 0 30px rgba(177,75,255,0.08);
+}
+@keyframes gate-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.08); opacity: 0.8; }
+}
+
 .panel-frame {
   position: relative;
   background:

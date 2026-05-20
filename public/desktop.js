@@ -494,23 +494,27 @@ function startBgm() {
   }
 }
 
-// Best-effort: try to "warm" the audio element on the very first user gesture
-// the page receives (even before mobile pairing) so playback is unlocked.
-(function unlockAudioOnFirstGesture() {
-  const armed = { done: false };
-  function onGesture() {
-    if (armed.done) return;
-    armed.done = true;
+// Tap-to-begin gate: unlocks audio (browser autoplay policy) and reveals the pair panel.
+(function setupEnterGate() {
+  const gate = $('enter-gate');
+  if (!gate) return;
+  function enter() {
     const audio = $('bgm');
-    if (!audio) return;
-    audio.muted = true;
-    audio.play().then(() => {
-      audio.pause();
-      audio.muted = false;
-    }).catch(() => {});
+    if (audio) {
+      // Warm: play muted briefly, then unmute. On most browsers this is enough
+      // to unlock subsequent unmuted playback.
+      audio.muted = true;
+      audio.play().then(() => {
+        audio.pause();
+        audio.muted = false;
+      }).catch(() => {});
+    }
+    gate.classList.add('fading');
+    setTimeout(() => gate.remove(), 700);
+    $('pair-panel').classList.remove('hidden');
   }
-  window.addEventListener('pointerdown', onGesture, { once: true });
-  window.addEventListener('keydown', onGesture, { once: true });
+  gate.addEventListener('click', enter, { once: true });
+  gate.addEventListener('touchstart', enter, { once: true, passive: true });
 })();
 
 function fadeBgmTo(targetVol, durationMs) {
