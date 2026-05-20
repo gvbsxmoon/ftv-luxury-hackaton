@@ -100,72 +100,21 @@
   let levelSince = null;
   let isCalibrated = false;
 
-  // Quaternion-based: store inverse of the calibration quaternion, then per-frame
-  // compute (qZeroInv * qNow) and extract the twist around the device's X axis.
-  const qZeroInv = [1, 0, 0, 0]; // [w, x, y, z]
-  let lastUnwrapped = 0;          // continuous twist angle (rad), unwrapped from -PI..PI
+  // Gyroscope-rate integration: avoids the Euler singularity at beta=±90°.
+  // After calibration, we listen to DeviceMotionEvent.rotationRate (deg/s) and
+  // integrate rotationRate.beta over dt to get a clean angle in radians.
+  let integratedAngle = 0;        // radians, accumulator from gyro rate
   let smoothed = 0;               // exponentially-smoothed angle sent to desktop
-  const SMOOTH_ALPHA = 0.35;      // 0 = no signal, 1 = no smoothing
-  const MAX_FRAME_JUMP = 0.6;     // rad (~34°): drop spikes above this between frames
+  const SMOOTH_ALPHA = 0.35;
+  const RATE_DEAD_ZONE = 0.5;     // deg/s — ignore tiny noise so the angle doesn't drift
+  let lastMotionT = 0;
 
   let lastSent = 0;
   const SEND_HZ = 60;
 
-  // ---- quaternion helpers (inline, no THREE on mobile) ----
-  function eulerToQuat(alphaDeg, betaDeg, gammaDeg) {
-    // Browser device-orientation convention: ZXY intrinsic.
-    const a = (alphaDeg || 0) * Math.PI / 180;
-    const b = (betaDeg  || 0) * Math.PI / 180;
-    const g = (gammaDeg || 0) * Math.PI / 180;
-    const cZ = Math.cos(a / 2), sZ = Math.sin(a / 2);
-    const cX = Math.cos(b / 2), sX = Math.sin(b / 2);
-    const cY = Math.cos(g / 2), sY = Math.sin(g / 2);
-    // q = qZ * qX * qY
-    // First qZX = qZ * qX
-    const w1 = cZ * cX, x1 = cZ * sX, y1 = sZ * sX, z1 = sZ * cX;
-    // Then qZX * qY
-    const w = w1 * cY - y1 * sY;
-    const x = x1 * cY + z1 * sY;
-    const y = y1 * cY + w1 * sY;
-    const z = z1 * cY - x1 * sY;
-    return [w, x, y, z];
-  }
-  function quatMul(q1, q2) {
-    const [w1, x1, y1, z1] = q1;
-    const [w2, x2, y2, z2] = q2;
-    return [
-      w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-      w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-      w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-      w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-    ];
-  }
-  function quatInv(q) {
-    return [q[0], -q[1], -q[2], -q[3]];
-  }
-  // Twist around the local X axis (returns angle in rad in [-PI, PI]).
-  function twistAroundX(q) {
-    // Project onto the X-twist component: t = (w, x, 0, 0) normalized.
-    const w = q[0], x = q[1];
-    const len = Math.hypot(w, x) || 1;
-    const tw = w / len, tx = x / len;
-    let angle = 2 * Math.atan2(tx, tw);
-    if (angle >  Math.PI) angle -= 2 * Math.PI;
-    if (angle < -Math.PI) angle += 2 * Math.PI;
-    return angle;
-  }
-  // Continuous unwrap: returns prev + shortest-path delta to `current`.
-  function unwrap(prev, current) {
-    let d = current - prev;
-    while (d >  Math.PI) d -= 2 * Math.PI;
-    while (d < -Math.PI) d += 2 * Math.PI;
-    return prev + d;
-  }
-
   function onDeviceOrientation(e) {
     lastBeta  = e.beta  || 0;
     lastGamma = e.gamma || 0;
-    const qNow = eulerToQuat(e.alpha, e.beta, e.gamma);
 
     if (!isCalibrated) {
       // Surface-level detection
@@ -193,11 +142,11 @@
         }
 
         if (heldMs >= LEVEL_HOLD_MS) {
-          // LOCK: capture the inverse of the current quaternion as our zero.
-          const inv = quatInv(qNow);
-          qZeroInv[0] = inv[0]; qZeroInv[1] = inv[1]; qZeroInv[2] = inv[2]; qZeroInv[3] = inv[3];
-          lastUnwrapped = 0;
+          // LOCK: zero the gyro-rate integrator. From here on, angle is built up
+          // by integrating rotationRate.beta (deg/s) — no Euler, no singularity.
+          integratedAngle = 0;
           smoothed = 0;
+          lastMotionT = 0;
           isCalibrated = true;
           haptic([20, 40, 80]);
           showToast('Calibrated');
@@ -222,40 +171,38 @@
       }
       return;
     }
+    // Calibrated: nothing to do here — the angle is driven by devicemotion below.
+  }
 
-    // Calibrated: extract the twist around the device's X axis from the relative quaternion.
+  function onDeviceMotion(e) {
+    if (!isCalibrated) return;
+    const rate = e.rotationRate;
+    if (!rate) return;
+
     const now = performance.now();
+    if (lastMotionT === 0) { lastMotionT = now; return; }
+    const dt = Math.min(0.1, (now - lastMotionT) / 1000); // s, capped to avoid huge jumps after pause
+    lastMotionT = now;
+
+    // rotationRate.beta = angular speed around device X axis (deg/s).
+    let rateBeta = rate.beta || 0;
+    if (Math.abs(rateBeta) < RATE_DEAD_ZONE) rateBeta = 0;
+    integratedAngle += (rateBeta * Math.PI / 180) * dt;
+
     if (now - lastSent < 1000 / SEND_HZ) return;
     lastSent = now;
 
-    const qRel = quatMul(qZeroInv, qNow);
-    const raw = twistAroundX(qRel);              // [-PI, PI]
-    const candidate = unwrap(lastUnwrapped, raw);
-    // Spike rejection: ignore frames that jump more than MAX_FRAME_JUMP rad.
-    let dropped = false;
-    if (Math.abs(candidate - lastUnwrapped) > MAX_FRAME_JUMP) {
-      dropped = true;
-    } else {
-      lastUnwrapped = candidate;
-    }
-    // Exponential smoothing on top of the unwrapped angle.
-    smoothed += (lastUnwrapped - smoothed) * SMOOTH_ALPHA;
-    const angleRad = smoothed;
-    socket.emit('armPitch', { angle: angleRad });
+    smoothed += (integratedAngle - smoothed) * SMOOTH_ALPHA;
+    socket.emit('armPitch', { angle: smoothed });
     pulseBars();
-
-    // Light continuous haptic feedback while rotating (gated by speed).
     rotationHaptic(smoothed, now);
 
     if (now - lastLog > 100) {
       lastLog = now;
-      const a = (e.alpha == null ? 'null' : e.alpha.toFixed(1));
       console.log(
-        `gyro a=${a} b=${lastBeta.toFixed(1)} g=${lastGamma.toFixed(1)} ` +
-        `twistRaw=${(raw * 180 / Math.PI).toFixed(1)} ` +
-        `unwrap=${(lastUnwrapped * 180 / Math.PI).toFixed(1)} ` +
-        `smooth=${(smoothed * 180 / Math.PI).toFixed(1)}` +
-        (dropped ? ' [dropped spike]' : '')
+        `motion rateBeta=${(rate.beta || 0).toFixed(1)} ` +
+        `integ=${(integratedAngle * 180 / Math.PI).toFixed(1)} ` +
+        `smooth=${(smoothed * 180 / Math.PI).toFixed(1)}`
       );
     }
   }
@@ -263,13 +210,15 @@
 
   function startGyro() {
     window.addEventListener('deviceorientation', onDeviceOrientation, true);
+    window.addEventListener('devicemotion', onDeviceMotion, true);
   }
 
   $('btn-recalib-2').addEventListener('click', () => {
     isCalibrated = false;
     levelSince = null;
-    lastUnwrapped = 0;
+    integratedAngle = 0;
     smoothed = 0;
+    lastMotionT = 0;
     showToast('Place phone flat to recalibrate');
     goto('calib');
   });
