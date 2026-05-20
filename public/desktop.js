@@ -443,9 +443,15 @@ function onOrientationUpdate(payload) {
 // Arm + watch + axes stay fixed; the camera orbits around them.
 let targetArmPitch = 0;   // radians (from phone)
 let currentArmPitch = 0;  // radians (smoothed, last applied)
+let lastPitchLog = 0;
 function onArmPitch(payload) {
   targetArmPitch = payload.angle || 0;
   $('hud-quat').textContent = `pitch: ${(targetArmPitch * 180 / Math.PI).toFixed(1)}°`;
+  const now = performance.now();
+  if (now - lastPitchLog > 100) {
+    lastPitchLog = now;
+    console.log(`armPitch deg=${(targetArmPitch * 180 / Math.PI).toFixed(1)} rad=${targetArmPitch.toFixed(3)}`);
+  }
 }
 
 function enterScene() {

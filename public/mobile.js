@@ -187,12 +187,24 @@
 
     // Relative angle since calibration zero.
     let delta = lastBeta - zeroBeta;
+    const rawDelta = delta;
     // Clamp to +/-90° so the arm cannot flip
     delta = clamp(delta, -90, 90);
     const angleRad = delta * Math.PI / 180;
     socket.emit('armPitch', { angle: angleRad });
     pulseBars();
+
+    // Throttled debug log: alpha/beta/gamma raw, zeroBeta, raw delta, clamped delta.
+    if (now - lastLog > 100) {
+      lastLog = now;
+      const a = (e.alpha == null ? 'null' : e.alpha.toFixed(1));
+      console.log(
+        `gyro a=${a} b=${lastBeta.toFixed(1)} g=${lastGamma.toFixed(1)} ` +
+        `zeroB=${zeroBeta.toFixed(1)} rawDelta=${rawDelta.toFixed(1)} clamped=${delta.toFixed(1)}`
+      );
+    }
   }
+  let lastLog = 0;
 
   function startGyro() {
     window.addEventListener('deviceorientation', onDeviceOrientation, true);
