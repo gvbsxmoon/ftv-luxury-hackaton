@@ -93,6 +93,10 @@ io.on('connection', (socket) => {
     socket.to(sessionId).emit('orientationUpdate', payload);
   });
 
+  socket.on('armPitch', (payload) => {
+    socket.to(sessionId).emit('armPitch', payload);
+  });
+
   socket.on('watchSelect', (payload) => {
     socket.to(sessionId).emit('watchSelect', payload);
   });

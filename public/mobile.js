@@ -28,13 +28,12 @@
     $('m-state').textContent = 'session error';
   });
 
-  function haptic(pat) {
-    if (navigator.vibrate) navigator.vibrate(pat);
-  }
+  function haptic(pat) { if (navigator.vibrate) navigator.vibrate(pat); }
   function showToast(msg) {
     const t = $('toast'); t.textContent = msg; t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 1400);
   }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
   // ---------------- step navigation ----------------
   function goto(stepName) {
@@ -45,9 +44,9 @@
 
   $('btn-continue-1').addEventListener('click', () => goto('select'));
 
-  // ---------------- watches ----------------
+  // ---------------- watches (single model for now) ----------------
   const watches = [
-    { id: 'chrono-01',  name: 'CHRONO 01',  meta: 'Obsidian — luxury edition' },
+    { id: 'chrono-01', name: 'CHRONO 01', meta: 'Obsidian — luxury edition' },
   ];
   const watchesEl = $('watches');
   let activeWatch = 'chrono-01';
@@ -71,15 +70,14 @@
   let useTouchFallback = false;
 
   $('btn-perm').addEventListener('click', async () => {
-    let okOrient = true, okMotion = true;
+    let okOrient = true;
     try {
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         const r = await DeviceOrientationEvent.requestPermission();
         okOrient = r === 'granted';
       }
       if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        const r = await DeviceMotionEvent.requestPermission();
-        okMotion = r === 'granted';
+        await DeviceMotionEvent.requestPermission().catch(() => {});
       }
     } catch (e) {
       okOrient = false;
@@ -106,105 +104,111 @@
     setupTouchpad();
   }
 
-  // ---------------- gyroscope ----------------
-  // We build a quaternion from device orientation (alpha, beta, gamma + screen orientation),
-  // following the canonical formulation used by Three.js DeviceOrientationControls.
-  function quatFromAxisAngle(ax, ang) {
-    const half = ang / 2, s = Math.sin(half);
-    return [ax[0] * s, ax[1] * s, ax[2] * s, Math.cos(half)];
-  }
-  function quatYXZ(x, y, z) {
-    const c1 = Math.cos(x / 2), c2 = Math.cos(y / 2), c3 = Math.cos(z / 2);
-    const s1 = Math.sin(x / 2), s2 = Math.sin(y / 2), s3 = Math.sin(z / 2);
-    return [
-      s1 * c2 * c3 + c1 * s2 * s3, // x
-      c1 * s2 * c3 - s1 * c2 * s3, // y
-      c1 * c2 * s3 - s1 * s2 * c3, // z
-      c1 * c2 * c3 + s1 * s2 * s3, // w
-    ];
-  }
-  function quatMul(a, b, out) {
-    const ax = a[0], ay = a[1], az = a[2], aw = a[3];
-    const bx = b[0], by = b[1], bz = b[2], bw = b[3];
-    out[0] = ax * bw + aw * bx + ay * bz - az * by;
-    out[1] = ay * bw + aw * by + az * bx - ax * bz;
-    out[2] = az * bw + aw * bz + ax * by - ay * bx;
-    out[3] = aw * bw - ax * bx - ay * by - az * bz;
-    return out;
-  }
+  // ---------------- gyroscope: surface-level detection + beta streaming ----------------
+  // The phone is laid face-up on a flat surface when:
+  //   - |beta|  small  (phone not tilted forward/back)
+  //   - |gamma| small  (phone not tilted sideways)
+  // beta and gamma are in degrees (DeviceOrientationEvent).
+  // We tolerate up to LEVEL_TOL degrees on each, and require LEVEL_HOLD_MS
+  // of continuous "level" before we lock the zero (auto-calibration).
 
-  function buildOrientationQuat(alpha, beta, gamma, screenOrient) {
-    const x = (beta || 0) * Math.PI / 180;
-    const y = (alpha || 0) * Math.PI / 180;
-    const z = -((gamma || 0) * Math.PI / 180);
-    const o = (screenOrient || 0) * Math.PI / 180;
+  const LEVEL_TOL = 15;      // degrees of tolerance for "flat"
+  const LEVEL_HOLD_MS = 800; // must stay level this long
 
-    const q = quatYXZ(x, y, z);
-    const qHalf = quatFromAxisAngle([1, 0, 0], -Math.PI / 2);
-    quatMul(q, qHalf, q);
-    const qScreen = quatFromAxisAngle([0, 0, 1], -o);
-    quatMul(q, qScreen, q);
-    return q;
-  }
+  let lastBeta = 0;
+  let lastGamma = 0;
+  let levelSince = null;     // timestamp when we first became "level" continuously
+  let zeroBeta = null;       // baseline beta (set when leveled)
+  let isCalibrated = false;
 
   let lastSent = 0;
-  let lastQuat = [0, 0, 0, 1];
-  let baselineQuat = null;
-
-  function getScreenOrient() {
-    if (screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
-    return window.orientation || 0;
-  }
+  const SEND_HZ = 60;
 
   function onDeviceOrientation(e) {
-    const q = buildOrientationQuat(e.alpha, e.beta, e.gamma, getScreenOrient());
-    lastQuat = q;
+    lastBeta  = e.beta  || 0;
+    lastGamma = e.gamma || 0;
 
-    // visualize on calibration step
-    const dot = $('calib-dot');
-    if (dot && document.querySelector('.m-step.active')?.dataset.step === 'calib') {
-      // beta -90..90 -> y, gamma -90..90 -> x
-      const px = clamp((e.gamma || 0) / 60, -1, 1) * 70;
-      const py = clamp(((e.beta || 0) - 60) / 60, -1, 1) * 70; // assume 60° hold
-      dot.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
+    if (!isCalibrated) {
+      // Surface-level detection
+      const flat = Math.abs(lastBeta) <= LEVEL_TOL && Math.abs(lastGamma) <= LEVEL_TOL;
+      const now = performance.now();
+
+      if (flat) {
+        if (levelSince === null) levelSince = now;
+        const heldMs = now - levelSince;
+
+        // visualize: dot moves with tilt, target ring is the goal
+        const dot = $('calib-dot');
+        if (dot) {
+          const px = clamp(lastGamma / LEVEL_TOL, -1, 1) * 18;
+          const py = clamp(lastBeta  / LEVEL_TOL, -1, 1) * 18;
+          dot.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
+          dot.style.background = '#6efcff';
+          dot.style.boxShadow  = '0 0 18px #6efcff';
+        }
+
+        const status = $('calib-status');
+        if (status) {
+          const pct = Math.min(1, heldMs / LEVEL_HOLD_MS);
+          status.textContent = `Locking… ${Math.round(pct * 100)}%`;
+        }
+
+        if (heldMs >= LEVEL_HOLD_MS) {
+          // LOCK: this is our zero.
+          zeroBeta = lastBeta;
+          isCalibrated = true;
+          haptic([20, 40, 80]);
+          showToast('Calibrated — pick up the phone');
+          socket.emit('calibrationData', { zeroBeta });
+          goto('active');
+          $('active-title').textContent = 'Controller live.';
+        }
+      } else {
+        // not level: reset the timer
+        levelSince = null;
+        const dot = $('calib-dot');
+        if (dot) {
+          const px = clamp(lastGamma / 60, -1, 1) * 70;
+          const py = clamp(lastBeta  / 60, -1, 1) * 70;
+          dot.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
+          dot.style.background = '#b14bff';
+          dot.style.boxShadow  = '0 0 18px #b14bff';
+        }
+        const status = $('calib-status');
+        if (status) status.textContent = 'Waiting for level surface…';
+      }
+      return;
     }
 
+    // Calibrated: stream relative beta as the arm-X-axis angle.
     const now = performance.now();
-    if (now - lastSent > 1000 / 60) {
-      lastSent = now;
-      socket.emit('orientationUpdate', { q });
-      pulseBars();
-    }
-  }
+    if (now - lastSent < 1000 / SEND_HZ) return;
+    lastSent = now;
 
-  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+    // Relative angle since calibration zero.
+    let delta = lastBeta - zeroBeta;
+    // Clamp to +/-90° so the arm cannot flip
+    delta = clamp(delta, -90, 90);
+    const angleRad = delta * Math.PI / 180;
+    socket.emit('armPitch', { angle: angleRad });
+    pulseBars();
+  }
 
   function startGyro() {
     window.addEventListener('deviceorientation', onDeviceOrientation, true);
   }
 
-  $('btn-lock').addEventListener('click', () => {
-    baselineQuat = lastQuat.slice();
-    socket.emit('calibrationData', { quat: baselineQuat });
-    haptic([20, 40, 80]);
-    showToast('Calibration locked.');
-    goto('active');
-    $('active-title').textContent = 'Controller live.';
-  });
-  $('btn-recalib').addEventListener('click', () => {
-    haptic(15);
-    showToast('Hold steady…');
-  });
   $('btn-recalib-2').addEventListener('click', () => {
     if (useTouchFallback) {
-      tpX = 0; tpY = 0; sendTouchpad();
+      tpX = 0; sendTouchpad();
       showToast('Touch centered');
       return;
     }
-    baselineQuat = lastQuat.slice();
-    socket.emit('calibrationData', { quat: baselineQuat });
-    showToast('Recentered.');
-    haptic(20);
+    isCalibrated = false;
+    zeroBeta = null;
+    levelSince = null;
+    showToast('Place phone flat to recalibrate');
+    goto('calib');
   });
 
   $('btn-back-watch').addEventListener('click', () => goto('select'));
@@ -228,7 +232,7 @@
   }
 
   // ---------------- touch fallback ----------------
-  let tpX = 0, tpY = 0;
+  let tpX = 0;
   function setupTouchpad() {
     const pad = $('touchpad'), dot = $('tp-dot');
     let dragging = false, rect = null;
@@ -243,22 +247,20 @@
       const t = (e.touches && e.touches[0]) || e;
       const cx = t.clientX - rect.left - rect.width / 2;
       const cy = t.clientY - rect.top - rect.height / 2;
-      const nx = clamp(cx / (rect.width / 2), -1, 1);
       const ny = clamp(cy / (rect.height / 2), -1, 1);
-      tpX = nx; tpY = ny;
-      dot.style.transform = `translate(calc(-50% + ${cx}px), calc(-50% + ${cy}px))`;
+      tpX = ny;
+      dot.style.transform = `translate(-50%, calc(-50% + ${cy}px))`;
       sendTouchpad();
     }
     function onEnd() {
       dragging = false;
-      // drift back to center
       const start = performance.now();
-      const sx = tpX, sy = tpY;
+      const sy = tpX;
       function step(t) {
         const k = Math.min(1, (t - start) / 600);
-        const e = 1 - Math.pow(1 - k, 3);
-        tpX = sx * (1 - e); tpY = sy * (1 - e);
-        dot.style.transform = `translate(calc(-50% + ${tpX * rect.width / 2}px), calc(-50% + ${tpY * rect.height / 2}px))`;
+        const eo = 1 - Math.pow(1 - k, 3);
+        tpX = sy * (1 - eo);
+        dot.style.transform = `translate(-50%, calc(-50% + ${tpX * rect.height / 2}px))`;
         sendTouchpad();
         if (k < 1) requestAnimationFrame(step);
       }
@@ -273,21 +275,11 @@
   }
 
   function sendTouchpad() {
-    // tpX maps yaw, tpY maps pitch
-    const yaw = -tpX * (Math.PI / 3);
-    const pitch = -tpY * (Math.PI / 3);
-    // build quaternion ZYX
-    const cy = Math.cos(yaw / 2), sy = Math.sin(yaw / 2);
-    const cp = Math.cos(pitch / 2), sp = Math.sin(pitch / 2);
-    // y-axis (yaw) then x-axis (pitch): q = qy * qx
-    const qy = [0, sy, 0, cy];
-    const qx = [sp, 0, 0, cp];
-    const q = [0, 0, 0, 1];
-    quatMul(qy, qx, q);
-    socket.emit('orientationUpdate', { q });
+    const angle = -tpX * (Math.PI / 3);
+    socket.emit('armPitch', { angle });
     pulseBars();
   }
 
-  // initial: show "paired" step right away (we are in this page only after scan succeeded)
+  // initial step
   goto('paired');
 })();

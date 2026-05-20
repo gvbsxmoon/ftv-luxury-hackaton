@@ -46,28 +46,25 @@
       <div class="m-step" data-step="perm">
         <div class="m-card">
           <div class="tag">03 // GRANT</div>
-          <h2>Hold the phone like the watch.</h2>
-          <p>We need motion sensor access to map your wrist into 3D space. Hold your phone face-up, as if you were wearing the timepiece.</p>
+          <h2>Enable motion sensors.</h2>
+          <p>We need access to your phone's gyroscope to control the arm in 3D space.</p>
           <button class="btn" id="btn-perm">Enable Motion</button>
           <div style="height: 10px;"></div>
           <button class="btn ghost" id="btn-skip-perm">Use Touch Instead</button>
         </div>
       </div>
 
-      <!-- STEP 4: Calibration -->
+      <!-- STEP 4: Flat-surface calibration -->
       <div class="m-step" data-step="calib">
         <div class="m-card">
           <div class="tag">04 // CALIBRATE</div>
-          <h2>Center your wrist.</h2>
-          <p>Hold steady in the neutral position. Align the dot inside the ring, then lock.</p>
+          <h2 id="calib-title">Place your phone on a flat surface.</h2>
+          <p id="calib-desc">Lay the phone face up on a table, screen pointing to the ceiling. We'll auto-detect when it's level.</p>
           <div class="calib-circle">
             <div class="calib-target"></div>
             <div class="calib-dot" id="calib-dot"></div>
           </div>
-          <div class="row">
-            <button class="btn ghost" id="btn-recalib">Recenter</button>
-            <button class="btn" id="btn-lock">Lock</button>
-          </div>
+          <div id="calib-status" style="text-align:center; font-size:11px; letter-spacing:0.25em; text-transform:uppercase; color:#8a78b0; margin-bottom:12px;">Waiting for level surface…</div>
         </div>
       </div>
 

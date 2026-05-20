@@ -34,6 +34,7 @@ function connectSocket() {
     else onMobileLeft();
   });
   socket.on('orientationUpdate', onOrientationUpdate);
+  socket.on('armPitch', onArmPitch);
   socket.on('watchSelect', (m) => setActiveWatch(m.id));
   socket.on('calibrationData', (m) => onCalibration(m));
   socket.on('controlMode', (m) => onControlMode(m));
@@ -158,10 +159,17 @@ window.addEventListener('resize', () => {
 // ============== Models ==============
 const loader = new GLTFLoader();
 
+// Arm composition: place anchor on the LEFT side of frame, fingers pointing RIGHT.
 const armGroup = new THREE.Group();
-armGroup.position.set(0.35, 0, 0);
+armGroup.position.set(-0.45, 0, 0);
 armGroup.visible = false;
 scene.add(armGroup);
+
+// Orientation offset applied to the arm model so its rest pose is "fingers right, palm up".
+// Tunable with the same letter keys (Shift for fine), see ARM tuner below.
+const ARM_REST = {
+  rx: 0, ry: 0, rz: 0,
+};
 
 let armRoot = null;        // GLTF arm scene root
 let armPivot = null;       // intermediate node we rotate (arm orientation)
@@ -251,7 +259,10 @@ async function loadModels() {
   const armCenter1 = armBox1.getCenter(new THREE.Vector3());
   armRoot.position.sub(armCenter1);
 
-  // Pivot we rotate to follow gyroscope
+  // Apply rest-pose orientation to the model so the pivot only handles the X tilt.
+  armRoot.rotation.set(ARM_REST.rx, ARM_REST.ry, ARM_REST.rz);
+
+  // Pivot we rotate to follow gyroscope (rotation around local X = arm length axis).
   armPivot = new THREE.Group();
   armPivot.add(armRoot);
   armGroup.add(armPivot);
@@ -347,11 +358,20 @@ function flashAccent() {
 }
 
 function onOrientationUpdate(payload) {
+  // Legacy quaternion path kept for touch fallback compatibility.
   const q = new THREE.Quaternion(payload.q[0], payload.q[1], payload.q[2], payload.q[3]);
   if (hasCalibration) q.premultiply(calibInv);
   q.multiply(REMAP);
   targetQuat.copy(q);
   $('hud-quat').textContent = `q: ${q.x.toFixed(2)} ${q.y.toFixed(2)} ${q.z.toFixed(2)} ${q.w.toFixed(2)}`;
+}
+
+// New simple control: phone tilt around its X axis -> arm rotation around its X axis.
+let targetArmPitch = 0;   // radians
+let currentArmPitch = 0;
+function onArmPitch(payload) {
+  targetArmPitch = payload.angle || 0;
+  $('hud-quat').textContent = `pitch: ${(targetArmPitch * 180 / Math.PI).toFixed(1)}°`;
 }
 
 function enterScene() {
@@ -435,11 +455,11 @@ function animate() {
 
   // (preview mode auto-rotation disabled — use mouse OrbitControls instead)
 
-  // Smoothly slerp current → target (cinematic delay)
+  // Single-axis arm rotation around its local X axis (driven by phone beta delta).
   if (armPivot) {
-    const followStrength = 1 - Math.pow(0.0001, dt);
-    currentQuat.slerp(targetQuat, Math.min(0.25, followStrength * 6));
-    armPivot.quaternion.copy(currentQuat);
+    const k = Math.min(0.2, 1 - Math.pow(0.0001, dt));
+    currentArmPitch += (targetArmPitch - currentArmPitch) * k;
+    armPivot.rotation.set(currentArmPitch, 0, 0);
   }
 
   // Watch accent pulse
@@ -512,6 +532,20 @@ function updateTunerHUD() {
 }
 
 window.addEventListener('keydown', (e) => {
+  // Arm rest-pose tuner (independent of watch tuner): arrows + ,/.
+  if (armRoot && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === ',' || e.key === '.')) {
+    const stepR = e.shiftKey ? 0.02 : 0.08;
+    if (e.key === 'ArrowLeft')  ARM_REST.ry -= stepR;
+    if (e.key === 'ArrowRight') ARM_REST.ry += stepR;
+    if (e.key === 'ArrowUp')    ARM_REST.rx -= stepR;
+    if (e.key === 'ArrowDown')  ARM_REST.rx += stepR;
+    if (e.key === ',')          ARM_REST.rz -= stepR;
+    if (e.key === '.')          ARM_REST.rz += stepR;
+    armRoot.rotation.set(ARM_REST.rx, ARM_REST.ry, ARM_REST.rz);
+    console.log('ARM_REST', JSON.stringify(ARM_REST));
+    e.preventDefault();
+    return;
+  }
   if (e.key === 't' || e.key === 'T') {
     if (!tunerEl) tunerEl = buildTuner();
     tunerEl.style.display = tunerEl.style.display === 'none' ? 'block' : 'none';
