@@ -29,6 +29,22 @@
   });
 
   function haptic(pat) { if (navigator.vibrate) navigator.vibrate(pat); }
+
+  // Continuous-feeling haptic while rotating: short pulses at a cadence
+  // proportional to angular speed. Stops when nearly still.
+  let lastHapticAngle = 0;
+  let lastHapticTime = 0;
+  function rotationHaptic(angle, now) {
+    if (!navigator.vibrate) return;
+    const dAngle = Math.abs(angle - lastHapticAngle);
+    if (dAngle < 0.012) return; // ~0.7° dead zone
+    const dt = now - lastHapticTime;
+    const minGap = 55;          // base pulse rate ~18Hz
+    if (dt < minGap) return;
+    lastHapticTime = now;
+    lastHapticAngle = angle;
+    navigator.vibrate(8);       // ultra-short tick
+  }
   function showToast(msg) {
     const t = $('toast'); t.textContent = msg; t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 1400);
@@ -184,10 +200,11 @@
           smoothed = 0;
           isCalibrated = true;
           haptic([20, 40, 80]);
-          showToast('Calibrated — pick up the phone');
+          showToast('Calibrated');
           socket.emit('calibrationData', { ok: true });
           goto('active');
-          $('active-title').textContent = 'Controller live.';
+          $('active-title').textContent = 'Hold the phone tight in your hands';
+          $('active-sub').textContent  = 'Rotate your wrist — watch the obsidian arm follow.';
         }
       } else {
         // not level: reset the timer
@@ -226,6 +243,9 @@
     const angleRad = smoothed;
     socket.emit('armPitch', { angle: angleRad });
     pulseBars();
+
+    // Light continuous haptic feedback while rotating (gated by speed).
+    rotationHaptic(smoothed, now);
 
     if (now - lastLog > 100) {
       lastLog = now;
