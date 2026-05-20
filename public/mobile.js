@@ -184,10 +184,11 @@
     const dt = Math.min(0.1, (now - lastMotionT) / 1000); // s, capped to avoid huge jumps after pause
     lastMotionT = now;
 
-    // rotationRate.beta = angular speed around device X axis (deg/s).
-    let rateBeta = rate.beta || 0;
-    if (Math.abs(rateBeta) < RATE_DEAD_ZONE) rateBeta = 0;
-    integratedAngle += (rateBeta * Math.PI / 180) * dt;
+    // Phone is held portrait, gripped in the hand: the wrist-twist gesture
+    // rotates the device around its long axis (Y) — that's rotationRate.gamma.
+    let rateAxis = rate.gamma || 0;
+    if (Math.abs(rateAxis) < RATE_DEAD_ZONE) rateAxis = 0;
+    integratedAngle += (rateAxis * Math.PI / 180) * dt;
 
     if (now - lastSent < 1000 / SEND_HZ) return;
     lastSent = now;
@@ -200,7 +201,7 @@
     if (now - lastLog > 100) {
       lastLog = now;
       console.log(
-        `motion rateBeta=${(rate.beta || 0).toFixed(1)} ` +
+        `motion rateGamma=${(rate.gamma || 0).toFixed(1)} ` +
         `integ=${(integratedAngle * 180 / Math.PI).toFixed(1)} ` +
         `smooth=${(smoothed * 180 / Math.PI).toFixed(1)}`
       );
