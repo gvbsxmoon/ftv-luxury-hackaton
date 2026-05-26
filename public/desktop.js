@@ -84,14 +84,14 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true 
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.25;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.setSize(window.innerWidth, window.innerHeight);
 
 const scene = new THREE.Scene();
 scene.background = null;
-scene.fog = new THREE.FogExp2(0x05030a, 0.18);
+scene.fog = new THREE.FogExp2(0x0a0908, 0.10);
 
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.05, 100);
 
@@ -153,11 +153,12 @@ const controls = {
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-// ----- Lighting -----
-const ambient = new THREE.AmbientLight(0x331e55, 0.35);
+// ----- Lighting (luxury watch boutique: warm key + cool soft fill, no neon) -----
+const ambient = new THREE.AmbientLight(0xefe2c7, 0.55);
 scene.add(ambient);
 
-const keyLight = new THREE.DirectionalLight(0xb14bff, 4.0);
+// Warm champagne key light — like a directional showcase spot.
+const keyLight = new THREE.DirectionalLight(0xfff1d6, 3.4);
 keyLight.position.set(-2.0, 2.5, 1.8);
 keyLight.castShadow = true;
 keyLight.shadow.mapSize.set(2048, 2048);
@@ -170,16 +171,18 @@ keyLight.shadow.camera.bottom = -2;
 keyLight.shadow.bias = -0.0005;
 scene.add(keyLight);
 
-const fillLight = new THREE.DirectionalLight(0x8da8c8, 0.25);
+// Cool neutral fill from the opposite side to lift shadows without color cast.
+const fillLight = new THREE.DirectionalLight(0xe6ecf2, 0.85);
 fillLight.position.set(2.5, 1.0, 1.5);
 scene.add(fillLight);
 
-const rimLight = new THREE.DirectionalLight(0x6efcff, 1.4);
+// Soft warm rim from behind for that polished metal silhouette.
+const rimLight = new THREE.DirectionalLight(0xd4bc8e, 1.6);
 rimLight.position.set(1.5, 0.8, -2.5);
 scene.add(rimLight);
 
-// Point light pulse near the watch
-const watchAccent = new THREE.PointLight(0xb14bff, 0.8, 2.0, 1.6);
+// Subtle warm accent near the watch (replaces the old purple pulse).
+const watchAccent = new THREE.PointLight(0xefe2c7, 0.6, 2.0, 1.6);
 watchAccent.position.set(0.2, 0.1, 0.4);
 scene.add(watchAccent);
 
@@ -189,7 +192,7 @@ scene.add(watchAccent);
 // ----- Post FX -----
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.28, 0.6, 0.85);
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.12, 0.7, 0.92);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
@@ -221,7 +224,7 @@ const ARM_OFFSET = {
 
 // Stage transform — moves arm+watch+axes together.
 const STAGE_OFFSET = {
-  x: 0.510, y: 0.060, z: -0.360,
+  x: 0.510, y: -0.030, z: -0.360,
   rx: 0.00, ry: -1.92, rz: 0.00,
   s: 1.35,
 };
@@ -241,10 +244,10 @@ function obsidianizeArm(root) {
       o.castShadow = true; o.receiveShadow = true;
       const m = o.material;
       if (m && m.isMeshStandardMaterial) {
-        m.color = new THREE.Color(0x0c0c12);
-        m.metalness = 0.85;
-        m.roughness = 0.22;
-        m.envMapIntensity = 1.2;
+        m.color = new THREE.Color(0x141414);
+        m.metalness = 0.78;
+        m.roughness = 0.28;
+        m.envMapIntensity = 1.6;
         if (m.map) m.map = null;
         if (m.emissiveMap) m.emissiveMap = null;
         m.emissive = new THREE.Color(0x000000);
@@ -256,16 +259,37 @@ function obsidianizeArm(root) {
 }
 
 function styleWatch(root) {
+  // Luxury watch palette: kill any neon/purple emissive baked into the glb,
+  // and re-tint blue/violet diffuse colors toward champagne/silver.
+  const mats = (m) => Array.isArray(m) ? m : (m ? [m] : []);
   root.traverse((o) => {
-    if (o.isMesh) {
-      o.castShadow = true; o.receiveShadow = true;
-      const m = o.material;
-      if (m && m.isMeshStandardMaterial) {
-        m.envMapIntensity = 0.55;
-        m.metalness = Math.min(0.85, (m.metalness ?? 0.5));
-        m.roughness = Math.max(0.45, (m.roughness ?? 0.4) + 0.15);
-        m.needsUpdate = true;
+    if (!o.isMesh) return;
+    o.castShadow = true; o.receiveShadow = true;
+    for (const m of mats(o.material)) {
+      if (!m) continue;
+      // Neutralize ANY emissive — no more glowing violet trims.
+      if ('emissive' in m) {
+        m.emissive = new THREE.Color(0x000000);
+        m.emissiveIntensity = 0.0;
+        if (m.emissiveMap) m.emissiveMap = null;
       }
+      // Re-tint diffuse colors that are clearly purple/blue (b > r) toward champagne.
+      if (m.color && m.color.isColor) {
+        const { r, g, b } = m.color;
+        const isPurpleish = b > r * 1.05 && b > g * 1.05;
+        if (isPurpleish) {
+          // luminance preserve, repaint as champagne tone
+          const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          const champ = new THREE.Color(0xd4bc8e).multiplyScalar(0.4 + lum);
+          m.color.copy(champ);
+        }
+      }
+      if (m.isMeshStandardMaterial) {
+        m.envMapIntensity = 0.85;
+        m.metalness = Math.min(0.9, (m.metalness ?? 0.5));
+        m.roughness = Math.max(0.32, (m.roughness ?? 0.4));
+      }
+      m.needsUpdate = true;
     }
   });
 }
@@ -427,8 +451,8 @@ function onControlMode(payload) {
 }
 
 function flashAccent() {
-  watchAccent.intensity = 4.5;
-  setTimeout(() => { watchAccent.intensity = 1.6; }, 220);
+  watchAccent.intensity = 1.6;
+  setTimeout(() => { watchAccent.intensity = 0.6; }, 220);
 }
 
 function onOrientationUpdate(payload) {
@@ -596,8 +620,8 @@ function animate() {
     }
   }
 
-  // Watch accent pulse
-  watchAccent.intensity = 0.7 + Math.sin(t * 2.4) * 0.2;
+  // Watch accent: gentle, almost-still breathing — no neon throb.
+  watchAccent.intensity = 0.55 + Math.sin(t * 1.4) * 0.08;
 
   // FPS
   fpsAcc += dt; fpsCount++;
@@ -801,7 +825,7 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === '+' || e.key === '=') STAGE_OFFSET.s += stepS;
     else if (e.key === '-' || e.key === '_') STAGE_OFFSET.s -= stepS;
     else if (k === 'r') {
-      STAGE_OFFSET.x = 0.510; STAGE_OFFSET.y = 0.060; STAGE_OFFSET.z = -0.360;
+      STAGE_OFFSET.x = 0.510; STAGE_OFFSET.y = -0.030; STAGE_OFFSET.z = -0.360;
       STAGE_OFFSET.rx = 0.00; STAGE_OFFSET.ry = -1.92; STAGE_OFFSET.rz = 0.00;
       STAGE_OFFSET.s = 1.35;
     } else if (k === 'c') {

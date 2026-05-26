@@ -153,7 +153,7 @@
           socket.emit('calibrationData', { ok: true });
           goto('active');
           $('active-title').textContent = 'Hold the phone tight in your hands';
-          $('active-sub').textContent  = 'Rotate your wrist — watch the obsidian arm follow.';
+          $('active-sub').textContent  = 'Rotate your wrist — watch the Aurem piece follow.';
         }
       } else {
         // not level: reset the timer

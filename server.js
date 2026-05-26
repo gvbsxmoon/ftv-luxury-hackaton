@@ -134,7 +134,7 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n  Cyberpunk watch pairing running:`);
+  console.log(`\n  AUREM pairing running:`);
   console.log(`    Desktop:  http://${HOST}:${PORT}/`);
   console.log(`    (also)    http://localhost:${PORT}/`);
   console.log(`\n  Open the desktop URL on your large screen, then scan the QR with a phone.\n`);
