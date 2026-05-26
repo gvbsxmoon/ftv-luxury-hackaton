@@ -181,7 +181,7 @@
   const ZOOM_GAIN = 0.55;     // how much accel becomes velocity contribution
   const ZOOM_DECAY = 3.2;     // higher = velocity dies faster (s^-1)
   const ZOOM_DEAD = 0.25;     // m/s^2, accelerometer noise floor
-  const ZOOM_RANGE = 0.10;    // ±10% camera dolly (very soft)
+  const ZOOM_RANGE = 0.22;    // signed normalized output (was 0.10) — more presence
 
   function onDeviceMotion(e) {
     if (!isCalibrated) return;

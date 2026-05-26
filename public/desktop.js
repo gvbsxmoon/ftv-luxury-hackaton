@@ -473,7 +473,7 @@ let currentArmPitch = 0;  // radians (smoothed, last applied)
 // smoothed copy and apply the *delta* to camera.position each frame.
 let targetZoom = 0;
 let currentZoom = 0;
-const ZOOM_BASE_DOLLY = 0.6; // world units of max dolly when payload.z = ±1
+const ZOOM_BASE_DOLLY = 1.4; // world units of max dolly when payload.z = ±1 (more pronounced)
 function onArmZoom(payload) {
   targetZoom = clamp((payload && payload.z) || 0, -1, 1);
 }
