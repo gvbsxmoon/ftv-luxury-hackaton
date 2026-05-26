@@ -34,6 +34,7 @@ function connectSocket() {
   });
   socket.on('orientationUpdate', onOrientationUpdate);
   socket.on('armPitch', onArmPitch);
+  socket.on('armZoom', onArmZoom);
   socket.on('watchSelect', (m) => setActiveWatch(m.id));
   socket.on('calibrationData', (m) => onCalibration(m));
   socket.on('controlMode', (m) => onControlMode(m));
@@ -443,6 +444,17 @@ function onOrientationUpdate(payload) {
 // Arm + watch + axes stay fixed; the camera orbits around them.
 let targetArmPitch = 0;   // radians (from phone)
 let currentArmPitch = 0;  // radians (smoothed, last applied)
+// Soft zoom: tiny dolly along the camera-to-target direction. The mobile sends a
+// signed normalized value (already attenuated and decaying back to 0); we keep a
+// smoothed copy and apply the *delta* to camera.position each frame.
+let targetZoom = 0;
+let currentZoom = 0;
+const ZOOM_BASE_DOLLY = 0.6; // world units of max dolly when payload.z = ±1
+function onArmZoom(payload) {
+  targetZoom = clamp((payload && payload.z) || 0, -1, 1);
+}
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
 let lastPitchLog = 0;
 function onArmPitch(payload) {
   targetArmPitch = payload.angle || 0;
@@ -570,6 +582,18 @@ function animate() {
     const delta = next - currentArmPitch;
     currentArmPitch = next;
     pivotCameraAroundStageX(delta);
+  }
+
+  // Soft zoom: dolly along view direction by the delta of currentZoom.
+  {
+    const k = Math.min(0.12, 1 - Math.pow(0.0001, dt));
+    const next = currentZoom + (targetZoom - currentZoom) * k;
+    const dz = (next - currentZoom) * ZOOM_BASE_DOLLY;
+    currentZoom = next;
+    if (dz !== 0) {
+      const dir = new THREE.Vector3().subVectors(cameraTarget, camera.position).normalize();
+      camera.position.addScaledVector(dir, dz);
+    }
   }
 
   // Watch accent pulse

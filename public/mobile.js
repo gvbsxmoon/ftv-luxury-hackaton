@@ -174,6 +174,15 @@
     // Calibrated: nothing to do here — the angle is driven by devicemotion below.
   }
 
+  // Soft zoom: integrate device acceleration on Z (toward/away from face) into a
+  // velocity with strong decay; map velocity to a small zoom offset that auto-recenters.
+  let zoomVel = 0;            // m/s along device Z (decays to 0)
+  let zoomOffset = 0;         // unitless, kept in [-1, 1] before mapping
+  const ZOOM_GAIN = 0.55;     // how much accel becomes velocity contribution
+  const ZOOM_DECAY = 3.2;     // higher = velocity dies faster (s^-1)
+  const ZOOM_DEAD = 0.25;     // m/s^2, accelerometer noise floor
+  const ZOOM_RANGE = 0.10;    // ±10% camera dolly (very soft)
+
   function onDeviceMotion(e) {
     if (!isCalibrated) return;
     const rate = e.rotationRate;
@@ -181,20 +190,34 @@
 
     const now = performance.now();
     if (lastMotionT === 0) { lastMotionT = now; return; }
-    const dt = Math.min(0.1, (now - lastMotionT) / 1000); // s, capped to avoid huge jumps after pause
+    const dt = Math.min(0.1, (now - lastMotionT) / 1000);
     lastMotionT = now;
 
-    // Wrist twist (phone held in hand, screen facing user) = rotation around
-    // the device's Z axis (perpendicular to the screen) = rotationRate.alpha.
+    // ---- twist (existing) ----
     let rateAxis = rate.alpha || 0;
     if (Math.abs(rateAxis) < RATE_DEAD_ZONE) rateAxis = 0;
     integratedAngle += (rateAxis * Math.PI / 180) * dt;
+
+    // ---- soft zoom: device Z acceleration without gravity ----
+    const accZ = (e.acceleration && e.acceleration.z != null)
+      ? e.acceleration.z
+      : 0;
+    let aZ = accZ;
+    if (Math.abs(aZ) < ZOOM_DEAD) aZ = 0;
+    // Phone faces user → bringing wrist closer pushes screen toward face = +Z (negative depending on device frame).
+    // We feed accel into velocity with strong decay so it always returns to 0 (no drift).
+    zoomVel = zoomVel * Math.exp(-ZOOM_DECAY * dt) + aZ * ZOOM_GAIN * dt;
+    // Soft accumulator that also decays back to 0.
+    zoomOffset = zoomOffset * Math.exp(-ZOOM_DECAY * 0.5 * dt) + zoomVel * dt * 4;
+    if (zoomOffset >  1) zoomOffset =  1;
+    if (zoomOffset < -1) zoomOffset = -1;
 
     if (now - lastSent < 1000 / SEND_HZ) return;
     lastSent = now;
 
     smoothed += (integratedAngle - smoothed) * SMOOTH_ALPHA;
     socket.emit('armPitch', { angle: smoothed });
+    socket.emit('armZoom',  { z: zoomOffset * ZOOM_RANGE });
     pulseBars();
     rotationHaptic(smoothed, now);
 
@@ -203,7 +226,8 @@
       console.log(
         `motion rateAlpha=${(rate.alpha || 0).toFixed(1)} ` +
         `integ=${(integratedAngle * 180 / Math.PI).toFixed(1)} ` +
-        `smooth=${(smoothed * 180 / Math.PI).toFixed(1)}`
+        `smooth=${(smoothed * 180 / Math.PI).toFixed(1)} ` +
+        `accZ=${accZ.toFixed(2)} zVel=${zoomVel.toFixed(2)} zOff=${zoomOffset.toFixed(2)}`
       );
     }
   }

@@ -57,7 +57,7 @@ app.post('/api/session', async (req, res) => {
   const qrDataUrl = await QRCode.toDataURL(mobileUrl, {
     margin: 1,
     width: 480,
-    color: { dark: '#e9d5ff', light: '#0a000f' },
+    color: { dark: '#0a0908', light: '#f6efe1' },
   });
 
   res.json({ sessionId: id, token, mobileUrl, qrDataUrl, baseUrl });
@@ -95,6 +95,10 @@ io.on('connection', (socket) => {
 
   socket.on('armPitch', (payload) => {
     socket.to(sessionId).emit('armPitch', payload);
+  });
+
+  socket.on('armZoom', (payload) => {
+    socket.to(sessionId).emit('armZoom', payload);
   });
 
   socket.on('watchSelect', (payload) => {
